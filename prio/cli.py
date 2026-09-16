@@ -21,6 +21,24 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--only", help="comma-separated PR numbers to extract")
     ex.add_argument("--include-closed", action="store_true")
 
+    do = sub.add_parser("dossier", help="stage 2: per-PR model assessment")
+    dsub = do.add_subparsers(dest="dcmd", required=True)
+    ds = dsub.add_parser("submit", help="build prompts and submit (batch by default)")
+    ds.add_argument("--extract", required=True, type=Path, help="extract output dir (contains prs/)")
+    ds.add_argument("--out", required=True, type=Path, help="dossier output dir")
+    ds.add_argument("--only", help="comma-separated PR numbers")
+    ds.add_argument("--model", default="claude-opus-5")
+    ds.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
+    ds.add_argument("--budget-tokens", type=int, default=40000, help="approximate cap on the PR content per request")
+    ds.add_argument("--max-tokens", type=int, default=16000)
+    ds.add_argument("--dry-run", action="store_true", help="count tokens, estimate cost, print one prompt; no model calls")
+    ds.add_argument("--sync", action="store_true", help="call the API directly instead of the Batch API")
+    ds.add_argument("--force", action="store_true", help="re-assess even if a dossier for this input hash exists")
+    dc = dsub.add_parser("collect", help="fetch batch results into the dossier dir")
+    dc.add_argument("--out", required=True, type=Path)
+    dc.add_argument("--batch", help="batch id (default: every uncollected batch in --out/batches)")
+    dc.add_argument("--wait", action="store_true", help="poll until the batch ends")
+
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
 
@@ -29,10 +47,21 @@ def main(argv: list[str] | None = None) -> int:
 
         only = {int(x) for x in args.only.split(",")} if args.only else None
         res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed)
-        json.dump(res, sys.stdout)
-        print()
-        return 0
-    return 1
+    elif args.cmd == "dossier" and args.dcmd == "submit":
+        from . import dossier
+
+        only = {int(x) for x in args.only.split(",")} if args.only else None
+        res = dossier.cmd_submit(cfg, args.extract, args.out, only, args.model, args.effort,
+                                 args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force)
+    elif args.cmd == "dossier" and args.dcmd == "collect":
+        from . import dossier
+
+        res = dossier.cmd_collect(args.out, args.batch, args.wait)
+    else:
+        return 1
+    json.dump(res, sys.stdout)
+    print()
+    return 0
 
 
 if __name__ == "__main__":
