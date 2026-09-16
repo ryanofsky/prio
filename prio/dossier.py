@@ -85,11 +85,11 @@ SCHEMA = {
                     "member": {"type": "boolean"},
                     "evidence": {"type": "string", "description": "why it is or is not in this category"},
                     "band": {"type": "string", "enum": BANDS},
-                    "score": {"type": "number", "minimum": 0, "maximum": 1},
+                    "score": {"type": "number", "description": "0 to 1, consistent with band: P1 0.75-1, P2 0.5-0.75, P3 0.25-0.5, P4 0-0.25, Unranked 0"},
                     "factors": {
                         "type": "object", "additionalProperties": False,
                         "required": FACTORS,
-                        "properties": {f: {"type": "integer", "minimum": 0, "maximum": 3} for f in FACTORS},
+                        "properties": {f: {"type": "integer", "description": "0 none, 1 minor, 2 clear, 3 major"} for f in FACTORS},
                     },
                     "rationale": {"type": "string", "description": "why this band, citing evidence"},
                 },
@@ -180,7 +180,8 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int) -> str:
     facts = {
         "ack_table_from_bot": ack_table,
         "stack": rec["stack"],
-        "conflicts_with_open_prs": len(rec["refs"]["conflicts"]),
+        "conflicts_with_open_prs": [f"#{c['number']} {c['title']} ({c['author']})" for c in db.get("conflicts", [])[:25]]
+                                   + ([f"... and {len(db.get('conflicts', [])) - 25} more"] if len(db.get("conflicts", [])) > 25 else []),
         "depends_on_phrases": rec["refs"]["depends_on"],
         "fixes": rec["refs"]["fixes"],
         "linked_issues": rec["refs"]["linked_issues"],

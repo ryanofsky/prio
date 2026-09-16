@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--batch", help="batch id (default: every uncollected batch in --out/batches)")
     dc.add_argument("--wait", action="store_true", help="poll until the batch ends")
 
+    rp = sub.add_parser("report", help="render dossiers as markdown category tables")
+    rp.add_argument("--extract", required=True, type=Path)
+    rp.add_argument("--dossier", required=True, type=Path)
+    rp.add_argument("--category", action="append", help="limit to a category (repeatable)")
+    rp.add_argument("--no-expand", action="store_true", help="tables only")
+
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
 
@@ -57,6 +63,11 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_collect(args.out, args.batch, args.wait)
+    elif args.cmd == "report":
+        from . import report
+
+        sys.stdout.write(report.render(args.extract, args.dossier, args.category, not args.no_expand))
+        return 0
     else:
         return 1
     json.dump(res, sys.stdout)
