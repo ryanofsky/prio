@@ -346,6 +346,40 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     return {"batch": batch.id, "submitted": len(requests)}
 
 
+def cmd_status(out_dir: Path, all_batches: bool) -> dict:
+    """Show every known batch: local manifests first, then (with --all) the API's list."""
+    client = _client()
+    bdir = out_dir / "batches"
+    seen: set[str] = set()
+    rows = []
+    for mpath in sorted(bdir.glob("msgbatch_*.json")) if bdir.exists() else []:
+        with open(mpath) as f:
+            meta = json.load(f)
+        bid = meta["id"]
+        seen.add(bid)
+        row = {"id": bid, "created": meta.get("created"), "model": meta.get("model"),
+               "requests": len(meta.get("requests", [])), "local": meta.get("status")}
+        if meta.get("status") == "collected":
+            row.update({"succeeded": meta.get("succeeded"), "failed": meta.get("failed"), "cost_usd": meta.get("cost_usd")})
+        else:
+            b = client.messages.batches.retrieve(bid)
+            rc = b.request_counts
+            row.update({"api": b.processing_status, "processing": rc.processing, "succeeded": rc.succeeded,
+                        "errored": rc.errored, "expired": rc.expired, "canceled": rc.canceled})
+        rows.append(row)
+    if all_batches:
+        for b in client.messages.batches.list(limit=50):
+            if b.id in seen:
+                continue
+            rc = b.request_counts
+            rows.append({"id": b.id, "created": str(b.created_at)[:19], "local": "no manifest",
+                         "api": b.processing_status, "processing": rc.processing, "succeeded": rc.succeeded,
+                         "errored": rc.errored})
+    for r in rows:
+        print("  ".join(f"{k}={v}" for k, v in r.items()), file=sys.stderr)
+    return {"batches": rows}
+
+
 def cmd_collect(out_dir: Path, batch_id: str | None, wait: bool) -> dict:
     client = _client()
     bdir = out_dir / "batches"

@@ -33,14 +33,71 @@ engine never calls the GitHub API for PR content.
 | merge | (not yet) | no | site data |
 | render | (not yet) | no | static HTML |
 
+Requires Python 3.11+. The extract stage has no dependencies beyond the
+standard library; the model stages need the `anthropic` package.
+`nix-shell` in this directory provides both and defines a `prio` command
+(see `shell.nix`). Set `PRIO_CONFIG` to a config repo checkout to omit
+`--config`.
+
+## Usage
+
+### Extract
+
 ```
-python3 -m prio.cli --config ../prio-bitcoin extract \
+prio --config ../prio-bitcoin extract \
     --backup /var/lib/github-metadata-backup/data/bitcoin/bitcoin \
-    --out /var/lib/prio/extract
+    --out /var/lib/prio/extract [--only 123,456]
 ```
 
-Requires Python 3.11+. The extract stage has no dependencies beyond the
-standard library.
+Writes `prs/<n>.json` and `index.json`. Fast (seconds), no model.
+
+### Dossier
+
+Credentials: `ANTHROPIC_API_KEY` in the environment, or a key in
+`~/.config/prio/api-key` (mode 600), which the CLI reads if the variable
+is unset. Use a key from a workspace with a monthly spend limit.
+
+```
+# 1. See what it would cost before spending anything. Counts tokens for
+#    every PR, prints an estimate, and shows one full prompt.
+prio dossier submit --extract EXTRACT --out DOSSIER --only 123,456 --dry-run
+
+# 2. Submit through the Batch API (half price; results usually within an
+#    hour, up to 24 h). Only PRs whose input hash has no dossier yet are
+#    sent; --force re-assesses anyway.
+prio dossier submit --extract EXTRACT --out DOSSIER [--only ...] \
+    [--model claude-opus-5] [--effort high] [--budget-tokens 40000]
+
+# 3. Check on it any time, from any terminal. Reads the local manifests in
+#    DOSSIER/batches/ and asks the API for their status. --all also lists
+#    batches on the workspace that have no local manifest.
+prio dossier status --out DOSSIER [--all]
+
+# 4. Fetch results once the status is "ended". Safe to rerun; a manifest is
+#    marked collected only after its results are written.
+prio dossier collect --out DOSSIER [--batch msgbatch_...] [--wait]
+
+# Small iterations: call the API directly instead of batching (full price,
+# minutes instead of hours).
+prio dossier submit --extract EXTRACT --out DOSSIER --only 123 --sync
+```
+
+A batch lives on Anthropic's side once submitted. Killing the local
+process loses nothing; rerun `collect` later. Results stay available for
+29 days. Each dossier is stored as `DOSSIER/<n>/<input-hash>.json` with
+the model, token usage, and a cost estimate; `DOSSIER/<n>/latest` names
+the current one. Batch manifests under `DOSSIER/batches/` record what was
+sent and, after collection, what it cost.
+
+### Report
+
+```
+prio report --extract EXTRACT --dossier DOSSIER [--category ipc] [--no-expand] > report.md
+```
+
+One markdown table per category sorted by score, with an expanded block
+per PR (summary, rationale, evidence, reviewability and agreement
+reasons, dependencies, uncertainties, card).
 
 ## Layout
 

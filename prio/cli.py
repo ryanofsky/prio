@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from .config import load_config
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="prio")
-    ap.add_argument("--config", required=True, type=Path, help="path to a config repo checkout (contains project.toml)")
+    ap.add_argument("--config", type=Path, default=os.environ.get("PRIO_CONFIG"),
+                    help="path to a config repo checkout (contains project.toml); default $PRIO_CONFIG")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     ex = sub.add_parser("extract", help="stage 1: backup JSON -> compact per-PR facts")
@@ -38,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--out", required=True, type=Path)
     dc.add_argument("--batch", help="batch id (default: every uncollected batch in --out/batches)")
     dc.add_argument("--wait", action="store_true", help="poll until the batch ends")
+    dst = dsub.add_parser("status", help="show batch status (local manifests, and the API)")
+    dst.add_argument("--out", required=True, type=Path)
+    dst.add_argument("--all", action="store_true", help="also list batches on the workspace that have no local manifest")
 
     rp = sub.add_parser("report", help="render dossiers as markdown category tables")
     rp.add_argument("--extract", required=True, type=Path)
@@ -46,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--no-expand", action="store_true", help="tables only")
 
     args = ap.parse_args(argv)
+    if not args.config:
+        ap.error("--config is required (or set PRIO_CONFIG)")
     cfg = load_config(args.config)
 
     if args.cmd == "extract":
@@ -63,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_collect(args.out, args.batch, args.wait)
+    elif args.cmd == "dossier" and args.dcmd == "status":
+        from . import dossier
+
+        res = dossier.cmd_status(args.out, args.all)
     elif args.cmd == "report":
         from . import report
 
