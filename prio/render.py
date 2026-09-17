@@ -48,8 +48,10 @@ th { background: #f0f0f0; position: sticky; top: 0; }
 td .brief { display: block; }
 td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; }
 tr.open td .detail { display: block; }
-td.pr { min-width: 22rem; cursor: pointer; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
-td.prio { white-space: nowrap; font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
+td .brief { cursor: pointer; }
+td.pr { min-width: 22rem; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
+td.prio { white-space: nowrap; } td.prio .brief { font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
+td .detail { font-weight: 400; }
 td.rev, td.agree, td.size, td.reviews { white-space: nowrap; }
 td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-style: italic; color: #555; }
 .detail ul { margin: 0; padding-left: 1.1rem; } .detail li { margin: .15rem 0; }
@@ -57,9 +59,14 @@ td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-
 .legend { font-size: .8rem; color: var(--muted); margin: .5rem 0 1rem; } .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
-.more { font-size: .8rem; }
+.more { font-size: .8rem; text-align: right; margin-top: .3rem; }
+nav.top { font-size: .85rem; margin-bottom: .6rem; } nav.top a { margin-right: 1rem; }
+h1 a { color: inherit; } h1 a:hover { text-decoration: underline; }
+.intro { max-width: 60rem; } .intro p { margin: .4rem 0 .8rem; }
+ul.catlist { line-height: 1.7; } ul.catlist .editor { color: var(--muted); font-size: .9rem; }
+.foot { margin-top: 2rem; }
 .legend div { margin: .15rem 0; }
-.covers { font-size: .88rem; background: #fff; border: 1px solid var(--border); padding: .4rem .9rem; margin: .5rem 0 1rem; }
+.covers { font-size: .9rem; background: #fff; border: 1px solid var(--border); padding: .4rem 1rem; margin: 1rem 0; max-width: 60rem; }
 .covers h3 { font-size: .95rem; margin: .7rem 0 .2rem; } .covers p { margin: .3rem 0; } .covers ul { margin: .2rem 0; }
 .prpage .lead { font-weight: 600; } .prpage ul { margin: .3rem 0; padding-left: 1.2rem; }
 .prpage h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; border-bottom: 1px solid var(--border); }
@@ -70,11 +77,12 @@ td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5r
 JS = """
 document.addEventListener('click', function (ev) {
   if (ev.target.closest('a')) return;
-  var td = ev.target.closest('td.pr');
-  if (!td) return;
-  var tr = td.parentElement;
+  var brief = ev.target.closest('.brief');
+  if (!brief) return;
+  var tr = brief.closest('tr');
+  if (!tr) return;
   tr.classList.toggle('open');
-  var g = td.querySelector('.tg'); if (g) g.textContent = tr.classList.contains('open') ? '(\\u2212)' : '(+)';
+  var g = tr.querySelector('td.pr .tg'); if (g) g.textContent = tr.classList.contains('open') ? '(\\u2212)' : '(+)';
 });
 """
 
@@ -206,11 +214,9 @@ def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_hre
     r = d["result"]
     n = rec["number"]
     L = display_lines(disp, r, cat)
-    others = [f"{c['name']} {c['band']}" for c in r["categories"] if c["member"] and c["name"] != cat_name]
     pr_brief = (f'<span class="tg" title="expand/collapse row">(+)</span><a href="{_e(rec["url"])}">#{n}</a> '
                 f'<span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
-    pr_extra = ((f'<div><span class="k">Also in:</span> {_e(", ".join(others))}</div>' if others else "")
-                + f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>')
+    pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>'
     tag = cat.get("reason_tag") or ""
     prio_brief = f'{_e(cat["band"])}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
     prio_style = f"background:{_shade(cat['score'])};" if cat["band"] != "Unranked" else ""
@@ -293,10 +299,10 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     return '<div class="prpage">' + "".join(b) + "</div>"
 
 
-def _page(title: str, body: str, sub: str = "") -> str:
+def _page(title: str, body: str, sub: str = "", nav: str = "", h1: str | None = None) -> str:
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<title>{_e(title)}</title><style>{CSS}</style></head><body><main>'
-            f'<h1>{_e(title)}</h1><div class="sub">{sub}</div>{body}</main><script>{JS}</script></body></html>')
+            f'{nav}<h1>{h1 if h1 is not None else _e(title)}</h1>' + (f'<div class="sub">{sub}</div>' if sub else "") + f'{body}</main><script>{JS}</script></body></html>')
 
 
 def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None) -> dict:
@@ -329,12 +335,15 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         for i, (_, n, _c) in enumerate(rows, 1):
             ranks.setdefault(n, {})[name] = (i, len(rows))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    repo_url = (cfg.raw.get("project", {}) or {}).get("repo_url")
-    banner = ('<div class="banner">Every band, state, and summary on this page is model output against '
-              'version-controlled definitions, shown with its rationale. It is one person\'s tool for finding PRs worth '
-              'reviewing, not a project process. Click a PR to expand its row; hover any cell for the same text.'
-              + (f' Categories and their definitions live in <a href="{_e(repo_url)}">{_e(repo_url.replace("https://github.com/", ""))}</a>; '
-                 'pull requests that fix a category description or add a category are welcome.' if repo_url else "") + '</div>')
+    project = cfg.raw.get("project", {}) or {}
+    repo_url = project.get("repo_url")
+    def cat_src(name: str) -> str:
+        return f"{repo_url}/blob/main/categories/{name}.md" if repo_url else "#"
+    callout = ('<div class="banner">Every band, state, and summary on this page is model output against '
+               'version-controlled definitions, shown with its rationale. It is one person\'s tool for finding PRs worth '
+               'reviewing, not a project process. Click any cell\'s summary text to expand the row; hover a cell for the same text.'
+               + (f' The category definition lives in <a href="{_e(repo_url)}">{_e(repo_url.replace("https://github.com/", ""))}</a>; '
+                  'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
     legend = ('<div class="legend">'
               '<div>Priority: P1 to P4 within this category, then a one-word reason. Lighter cell = higher within the band.</div>'
               f'<div>Reviewability: <span style="background:{REVIEWABILITY_COLORS["Ready"]}">Ready</span>'
@@ -345,9 +354,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
               f'<div>Size: added/deleted lines, tests in parentheses; <span style="background:{SIZE_COLORS["S"]}">S</span>'
               f'<span style="background:{SIZE_COLORS["M"]}">M</span><span style="background:{SIZE_COLORS["L"]}">L</span>'
               f'<span style="background:{SIZE_COLORS["XL"]}">XL</span></div></div>')
-    nav = '<nav class="cats">' + " ".join(
-        f'<a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)} ({len(rows)})</a>'
-        for name, rows in sorted(members.items())) + "</nav>"
+    nav = '<nav class="top"><a href="index.html">Home</a></nav>'
     pages = []
     for name, rows in sorted(members.items()):
         cat = cats.get(name)
@@ -357,18 +364,27 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         body_rows = "".join(_row(recs[n], dossiers[n], c, name, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
         covers = ""
         if cat:
-            src = f'<p class="more"><a href="{_e(repo_url)}/blob/main/categories/{_e(name)}.md">Source on GitHub</a> · edits and new categories via pull request</p>' if repo_url else ""
-            covers = (f'<details class="covers"><summary>What this category covers and what matters in it</summary>'
-                      f'{md_to_html(cat.body)}{src}</details>')
-        body = banner + nav + covers + legend + head + body_rows + "</tbody></table>"
-        (out_dir / f"{name}.html").write_text(_page(f"{title}: review map", body, f"{len(rows)} PRs · generated {stamp}"))
+            covers = (f'<div class="covers"><h2><a href="{_e(cat_src(name))}">{_e(title)}</a>'
+                      + (f' <span class="editor">(editor: <a href="https://github.com/{_e(cat.owner)}">{_e(cat.owner)}</a>)</span>' if cat.owner else "")
+                      + f'</h2>{md_to_html(cat.body)}<p class="more"><a href="{_e(cat_src(name))}">Category definition on GitHub</a></p></div>')
+        body = (head + body_rows + "</tbody></table>" + legend + covers
+                + f'<div class="foot">{callout}<div class="sub">{len(rows)} PRs · generated {stamp}</div></div>')
+        h1 = f'<a href="{_e(cat_src(name))}">{_e(title)}</a>'
+        (out_dir / f"{name}.html").write_text(_page(f"{title}: review map", body, nav=nav, h1=h1))
         pages.append(name)
     for n, d in dossiers.items():
         if not d.get("result") or n not in recs:
             continue
-        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {})), "full analysis"))
-    index = banner + "<ul>" + "".join(
-        f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a> ({len(rows)} PRs)</li>'
-        for name, rows in sorted(members.items())) + "</ul>"
-    (out_dir / "index.html").write_text(_page(cfg.site_title, index, f"{len(dossiers)} PRs assessed · generated {stamp}"))
+        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {})), "full analysis",
+                                                          nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
+    intro = ('<div class="intro"><p>' + _e(project.get("description") or
+             f"Open {cfg.name} pull requests sorted into categories and ranked within each by how much the problem they address matters, so review time goes to consequential work. Every judgment is model output against a written definition, with its reasoning one click away.")
+             + '</p><p>Each category has an editor who owns its definition. ' + (f'To volunteer as editor of an existing category or to add a new one, open a pull request in <a href="{_e(repo_url)}">{_e(repo_url.replace("https://github.com/", ""))}</a>.' if repo_url else "") + '</p></div>')
+    catlist = '<ul class="catlist">' + "".join(
+        f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a> '
+        + (f'<span class="editor">(editor: <a href="{_e(cat_src(name))}">{_e(cats[name].owner)}</a>)</span>' if name in cats and cats[name].owner else "")
+        + f' <span class="editor">· {len(rows)} PRs</span></li>'
+        for name, rows in sorted(members.items(), key=lambda kv: (cats[kv[0]].title if kv[0] in cats else kv[0]).lower())) + "</ul>"
+    index = intro + catlist + f'<div class="foot">{callout}<div class="sub">{len(dossiers)} PRs assessed · generated {stamp}</div></div>'
+    (out_dir / "index.html").write_text(_page(cfg.site_title, index))
     return {"pages": pages, "prs": len(dossiers), "out": str(out_dir), "display_files": sum(1 for v in displays.values() if v)}

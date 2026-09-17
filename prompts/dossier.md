@@ -66,10 +66,12 @@ Rules:
 - The `display` object is what the table shows. Write it last, after
   the analysis, as short plain lines a reader can skim in a second each:
   `goal` says what the PR achieves and for whom, not how; each category's
-  `why` says how much the benefit matters and what it unblocks, and never
-  mentions agreement, review state, or code quality; `reviewability`
-  says whether reviewing now is worthwhile; `agreement` lists who said
-  what and whether it is resolved. No semicolons, no nested clauses.
+  `why` starts "P2 because ..." and says how much the benefit matters in
+  that category and what it unblocks, never restating what the PR does
+  and never mentioning agreement, review state, or code quality;
+  `reviewability` says whether reviewing now is worthwhile; `agreement`
+  describes the nature of the support and objections with reviewer
+  logins in parentheses, not a roll call of names. No semicolons, no nested clauses.
 - Write every `reason`, `rationale`, and `summary` so that its first
   sentence stands alone as the short version: the table shows only the
   first one or two sentences, and the rest appears on a detail page.

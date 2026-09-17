@@ -46,7 +46,7 @@ SCHEMA = {
             "properties": {
                 "goal": {"type": "array", "items": {"type": "string"}, "description": "1-3 lines: what the PR is trying to achieve and the benefit or problem solved, as a user or maintainer would state it. Not how it is implemented."},
                 "reviewability": {"type": "array", "items": {"type": "string"}, "description": "1-2 lines: is the code in a state worth reviewing now, and what if anything would invalidate a review. Open design questions are an invitation to review, not a reason to wait, unless a direction was decided and the change is pending."},
-                "agreement": {"type": "array", "items": {"type": "string"}, "description": "1-4 lines: who supports or objects, what they said in a few words, and whether it is resolved."},
+                "agreement": {"type": "array", "items": {"type": "string"}, "description": "2-5 lines framed around the nature of the feedback, with reviewer logins in parentheses at the end: 'Strong support because it adds X (login)', 'Nonblocking objection: harm Y (login)', 'Unaddressed objection: harm Z, no author reply (login)', 'Concept approval without stated reasons (login, login)'. Sentiment summaries without names are fine when true. Never bare ACK counts by name."},
                 "categories": {
                     "type": "array",
                     "items": {
@@ -54,7 +54,7 @@ SCHEMA = {
                         "required": ["name", "why"],
                         "properties": {
                             "name": {"type": "string"},
-                            "why": {"type": "array", "items": {"type": "string"}, "description": "2-3 lines on why this PR is or is not worth review time in this category: the size of the benefit, who feels it, what it unblocks. Nothing about agreement, review state, or code quality."},
+                            "why": {"type": "array", "items": {"type": "string"}, "description": "2-3 lines. The first begins with the band and 'because' (e.g. 'P2 because ...'). What makes this PR impactful or marginal in this category: size of benefit, who feels it, what it unblocks. Do not restate what the PR does (goal covers that). Nothing about agreement, review state, or code quality."},
                         },
                     },
                 },
