@@ -64,8 +64,12 @@ Rules:
   a reply, whether a fix was actually pushed, its status, and for
   anything not open the evidence that settled it (a quote from the
   reviewer's follow-up or the author's reply, with its date). Then the
-  `support` list: who spoke for the PR and why. The pipeline derives the
-  Agreement state from these lists and checks them against the thread
+  `support` list: who spoke for the PR and why. When unsure whether a
+  comment is an objection, list it: a listed non-objection carries a
+  quote a reader can check in seconds, an omitted objection leaves
+  nothing to check, so the two errors are not equal. The pipeline
+  derives the Agreement state from these lists and checks them against
+  the thread
   (a resolved objection without resolution evidence is treated as open;
   an author reply counts only if the author actually commented after
   the objection; a participant you skip is recorded as a gap), so the accuracy of the lists is what matters; your own `state`

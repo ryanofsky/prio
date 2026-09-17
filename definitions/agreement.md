@@ -63,6 +63,15 @@ fix, the state is Positive w/ caveats, and the detail names the standing
 drawback. If the critic is unsatisfied with the answer and decides the
 PR should not merge, Mild becomes Disputed.
 
+## Which error to prefer
+
+Reporting more agreement than exists, by leaving out an objection
+someone made, is the worse error: the reader has no citation to check
+and would have to read the whole thread to notice. Over-weighting a
+minor objection, or missing that one was resolved, is the lesser error:
+the quote is next to the state and can be checked in seconds. When in
+doubt, list the objection and let the detail carry the doubt.
+
 ## Other rules
 
 - Stale ACKs still count toward Agreement (the project wanted the change
