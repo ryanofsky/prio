@@ -131,6 +131,20 @@ rather than appended. A band the pass changed is shown with its reason in
 the priority cell; the pass's notes on review order and overlapping PRs
 are on `rank/<category>.html`, linked from the legend.
 
+### Two reads of the agreement
+
+Omitting an objection is the error a reader cannot check, and it is
+variance rather than bias: the same PR enumerates an objection in one
+run and drops it in the next. `--agreement-reads 2` asks the same model
+a second time with the thread only (no code, a prompt that says to list
+a doubtful objection rather than leave it out) and merges the two
+enumerations: every objection either read found, the harsher status
+when both saw it, one entry per reviewer per day. The state is derived
+from the merged lists; both reads stay in the dossier under
+`agreement.first_read` and `agreement.thread_read`. About 40% more
+dossier cost. Sync and OpenRouter paths only. In the NixOS module:
+`services.prio.agreementReads = 2`.
+
 ### Re-assess after a prompt change
 
 A dossier is keyed by the PR's input hash and the model, so editing a

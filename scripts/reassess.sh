@@ -10,11 +10,12 @@
 #
 # Environment (defaults match the NixOS module): PRIO_DATA=/var/lib/prio,
 # PRIO_SITE=$PRIO_DATA/site, PRIO_MODEL=openrouter/google/gemini-3.8-flash,
-# PRIO_DISPLAY_MODEL=$PRIO_MODEL, PRIO_PATCH_CHARS=40000, PRIO_MAX_COST=8.
+# PRIO_DISPLAY_MODEL=$PRIO_MODEL, PRIO_PATCH_CHARS=40000, PRIO_MAX_COST=8,
+# PRIO_AGREEMENT_READS=1 (2 = second thread-only read merged by union).
 set -euo pipefail
 D=${PRIO_DATA:-/var/lib/prio}; SITE=${PRIO_SITE:-$D/site}
 MODEL=${PRIO_MODEL:-openrouter/google/gemini-3.8-flash}; DMODEL=${PRIO_DISPLAY_MODEL:-$MODEL}
-PATCH=${PRIO_PATCH_CHARS:-40000}; MAX=${PRIO_MAX_COST:-8}
+PATCH=${PRIO_PATCH_CHARS:-40000}; MAX=${PRIO_MAX_COST:-8}; READS=${PRIO_AGREEMENT_READS:-1}
 cd "$D"
 export HOME=$D PYTHONPATH=$D/src/engine PRIO_OPENROUTER_WORKERS=${PRIO_OPENROUTER_WORKERS:-6}
 [ -r "$D/api-key" ] && export ANTHROPIC_API_KEY="$(cat "$D/api-key")"
@@ -32,7 +33,7 @@ if [ ! -s "$LIST" ]; then mark "done: nothing selected"; exit 0; fi
 echo "selected: $(tr '\n' ' ' < "$LIST")"
 git_arg=(); [ -d "$D/git" ] && git_arg=(--git "$D/git")
 prio dossier submit --extract "$D/extract" --out "$D/dossier" "${git_arg[@]}" --only "@$LIST" --force \
-  --model "$MODEL" --patch-chars "$PATCH" --max-cost "$MAX" 2>&1 | grep -E 'total|failed|ERROR|estimated|need' || true
+  --model "$MODEL" --patch-chars "$PATCH" --max-cost "$MAX" --agreement-reads "$READS" 2>&1 | grep -E 'total|failed|ERROR|estimated|need' || true
 mark "dossiers re-assessed"
 prio display submit --extract "$D/extract" --dossier "$D/dossier" --out "$D/display" --model "$DMODEL" 2>&1 | grep -E 'total|failed|ERROR|need' || true
 mark "display lines regenerated"

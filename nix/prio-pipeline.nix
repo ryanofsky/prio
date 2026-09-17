@@ -82,7 +82,8 @@ let
     # --- model stages (batch; wait for results)
     log "dossier submit (max cost ${toString cfg.maxCost})"
     prio dossier submit --extract "$D/extract" --out "$D/dossier" ${lib.optionalString (cfg.projectRepo != null) ''--git "$D/git"''} \
-      --model ${cfg.model} --effort ${cfg.effort} --patch-chars ${toString cfg.patchChars} --max-cost ${toString cfg.maxCost}
+      --model ${cfg.model} --effort ${cfg.effort} --patch-chars ${toString cfg.patchChars} --max-cost ${toString cfg.maxCost} \
+      --agreement-reads ${toString cfg.agreementReads}
     mark "dossier batch submitted, waiting"
     prio dossier collect --out "$D/dossier" --wait
     mark "dossiers collected"
@@ -123,6 +124,7 @@ let
 in
 {
   options.services.prio = {
+    agreementReads = lib.mkOption { type = lib.types.int; default = 1; description = "2 = a second, thread-only read of the agreement merged by union (catches omitted objections; ~40% more dossier cost)"; };
     rankModel = lib.mkOption { type = lib.types.str; default = "claude-opus-5"; };
     rankEffort = lib.mkOption { type = lib.types.str; default = "high"; };
     scheduleText = lib.mkOption { type = lib.types.str; default = "Daily run at 01:00 UTC; weekly ranking pass on Sundays at 04:00 UTC."; description = "shown on the status page"; };
