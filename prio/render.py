@@ -60,7 +60,7 @@ td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
-.more { font-size: .8rem; margin-top: .3rem; }
+.more { font-size: .8rem; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; }
 nav.top { font-size: .85rem; margin-bottom: .6rem; } nav.top a { margin-right: 1rem; }
 h1 a { color: inherit; } h1 a:hover { text-decoration: underline; }
 .intro { max-width: 60rem; } .intro p { margin: .4rem 0 .8rem; }
