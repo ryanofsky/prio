@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     ds.add_argument("--dry-run", action="store_true", help="count tokens, estimate cost, print one prompt; no model calls")
     ds.add_argument("--sync", action="store_true", help="call the API directly instead of the Batch API")
     ds.add_argument("--force", action="store_true", help="re-assess even if a dossier for this input hash exists")
+    ds.add_argument("--agreement-reads", type=int, default=1, choices=[1, 2],
+                    help="2 = also read the thread alone for objections and merge by union (sync and OpenRouter paths)")
     dc = dsub.add_parser("collect", help="fetch batch results into the dossier dir")
     dc.add_argument("--out", required=True, type=Path)
     dc.add_argument("--batch", help="batch id (default: every uncollected batch in --out/batches)")
@@ -160,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         only = parse_only(args.only)
         res = dossier.cmd_submit(cfg, args.extract, args.out, only, args.model, args.effort,
                                  args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force,
-                                 args.git, args.patch_chars, args.max_cost)
+                                 args.git, args.patch_chars, args.max_cost, agreement_reads=args.agreement_reads)
     elif args.cmd == "dossier" and args.dcmd == "collect":
         from . import dossier
 

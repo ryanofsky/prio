@@ -89,6 +89,10 @@ ul.catlist { line-height: 1.7; padding-left: 1.2rem; } ul.catlist .editor { colo
 .prpage .lead { font-weight: 600; } .prpage ul { margin: .3rem 0; padding-left: 1.2rem; }
 .prpage h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; border-bottom: 1px solid var(--border); }
 .prpage .box { background: #fff; border: 1px solid var(--border); padding: .6rem .8rem; margin: .4rem 0; }
+.prpage .scroll { overflow-x: auto; }
+.prpage table.obj { border-collapse: collapse; font-size: .85rem; margin: .3rem 0; }
+.prpage table.obj th, .prpage table.obj td { border: 1px solid var(--border); padding: .2rem .4rem; vertical-align: top; text-align: left; }
+.prpage .muted { color: #666; }
 .prpage .k { color: var(--muted); }
 """
 
@@ -137,6 +141,45 @@ def lead(text: str, n: int = 2) -> str:
     """First n sentences of a text: the expanded-cell tier."""
     parts = _SENT.split((text or "").strip())
     return " ".join(parts[:n])
+
+
+def _objections(ag: dict) -> str:
+    """The enumerated objections, support, participants, and the code's
+    corrections, so a reader can check the state against quotes without
+    opening the thread. Only for dossiers made with the enumeration schema."""
+    if "objections" not in ag:
+        return ""
+    out = []
+    obs = ag.get("objections") or []
+    if obs:
+        rows = []
+        for o in obs:
+            status = o.get("status") or ""
+            if o.get("status_model") and o["status_model"] != status:
+                status = f'{status} <span class="muted">(model said {_e(o["status_model"])})</span>'
+            replied = "yes" if o.get("author_replied") else "no"
+            if o.get("author_replied_model") and not o.get("author_replied"):
+                replied = 'no <span class="muted">(model said yes)</span>'
+            rows.append(f'<tr><td>{_e(o.get("reviewer"))}</td><td>{_e(o.get("kind") or "")}</td><td>{_e(o.get("harm") or "")}</td>'
+                        f'<td>{status}</td><td>{"yes" if o.get("blocking") else "no"}</td><td>{replied}</td>'
+                        f'<td>{_t(o.get("evidence") or "")}' + (f'<br><span class="k">Settled:</span> {_t(o["resolution_evidence"])}' if o.get("resolution_evidence") else "") + '</td></tr>')
+        out.append('<p><span class="k">Objections:</span></p><div class="scroll"><table class="obj"><tr><th>Reviewer</th><th>Kind</th><th>Harm</th><th>Status</th><th>Blocking</th><th>Author replied</th><th>Quote</th></tr>'
+                   + "".join(rows) + '</table></div>')
+    else:
+        out.append('<p><span class="k">Objections:</span> none enumerated.</p>')
+    sup = ag.get("support") or []
+    if sup:
+        out.append('<p><span class="k">Support:</span></p>' + _ul([f'{x.get("reviewer")}: {x.get("reason") or "(no reason given)"}' + ("" if x.get("substantive") else " [not substantive]") for x in sup]))
+    parts = ag.get("participants") or []
+    if parts:
+        out.append('<p><span class="k">Participants:</span> ' + ", ".join(f'{_e(x.get("login"))} ({_e(x.get("stance"))})' for x in parts) + '</p>')
+    if ag.get("missing_participants"):
+        out.append('<p><span class="k">Commenters the model did not classify:</span> ' + _e(", ".join(ag["missing_participants"])) + '</p>')
+    if ag.get("corrections"):
+        out.append('<p><span class="k">Checked against the thread:</span></p>' + _ul(ag["corrections"]))
+    if ag.get("derivation"):
+        out.append(f'<p class="muted">State derived from the lists: {_e(ag["derivation"])}' + (f' (model\'s own read: {_e(ag["model_state"])})' if ag.get("model_state") and ag.get("model_state") != ag.get("state") else "") + '</p>')
+    return "".join(out)
 
 
 def _ul(items) -> str:
@@ -328,7 +371,8 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     rw_brief, rw_lines, rw_links, _ = _reviews(rec)
     b.append(f'<h2 id="agreement">Agreement: {_e(ag["state"])}</h2><div class="box">{_ul(L["agreement"])}'
              + (f'<p>{_t(ag["summary"])}</p>' if ag.get("summary") else "")
-             + f'<p>{_t(ag["reason"])}</p>{_ul(ag["evidence"])}<p><span class="k">Review verdicts (DrahtBot):</span> {rw_brief}</p>{rw_links}</div>')
+             + f'<p>{_t(ag["reason"])}</p>{_ul(ag["evidence"])}' + _objections(ag)
+             + f'<p><span class="k">Review verdicts (DrahtBot):</span> {rw_brief}</p>{rw_links}</div>')
     dep = r["dependencies"]
     if dep["depends_on"] or dep["enables"] or rec["stack"]["based_on"] or rec["stack"]["base_for"]:
         b.append('<h2 id="deps">Dependencies</h2><div class="box">'
