@@ -30,6 +30,8 @@ ENGINE_ROOT = Path(__file__).resolve().parent.parent
 DEFINITIONS = ["priority.md", "bands.md", "reviewability.md", "agreement.md"]
 
 BANDS = ["P1", "P2", "P3", "P4", "Unranked"]
+NEEDS = ["diff", "full_diff", "linked_issue_body", "base_pr_discussion", "conflicting_pr_details", "ci_status",
+         "tracking_issue", "earlier_discussion", "review_thread_resolution", "benchmark_data", "other"]
 AGREEMENT_STATES = ["Crickets", "Neutral", "Positive", "Strong", "Positive w/ caveats", "Mild", "Disputed", "Blocked"]
 FACTORS = ["security_stability", "bug_severity", "performance", "user_value", "leverage"]
 
@@ -37,7 +39,7 @@ SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["summary", "problem", "discussion", "reviewability", "agreement", "dependencies",
-                 "categories", "confidence", "uncertainties", "card", "display"],
+                 "categories", "confidence", "uncertainties", "needs", "card", "display"],
     "properties": {
         "display": {
             "type": "object", "additionalProperties": False,
@@ -121,6 +123,8 @@ SCHEMA = {
         },
         "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
         "uncertainties": {"type": "array", "items": {"type": "string"}},
+        "needs": {"type": "array", "items": {"type": "string", "enum": NEEDS},
+                  "description": "inputs that were missing or truncated and would have changed or firmed up the assessment; empty if none"},
         "card": {"type": "string"},
     },
 }

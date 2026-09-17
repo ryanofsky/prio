@@ -63,6 +63,13 @@ Rules:
   and each category's `reason_tag` is one or two words for why the band
   applies. Full reasoning goes in the `reason` and `rationale` fields,
   which readers see on expand.
+- `needs` lists, from the fixed vocabulary, any input that was missing or
+  cut short and would have changed or firmed up your assessment: the
+  diff when none was given, the rest of a truncated diff, the body of a
+  linked issue, the discussion on a base PR, details of conflicting PRs,
+  CI results, a tracking issue, earlier discussion dropped for length,
+  whether review threads were resolved, benchmark numbers. Leave it empty
+  when nothing was missing. This feeds data-source work, so be literal.
 - The `display` object is what the table shows. Write it last, after
   the analysis, as short plain lines a reader can skim in a second each:
   `goal` says what the PR achieves and for whom, not how; each category's

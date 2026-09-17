@@ -81,6 +81,24 @@ def spend(data_dir: Path) -> dict:
     return {"by_month": dict(sorted(by_month.items(), reverse=True)), "outputs": n}
 
 
+def needs_summary(data_dir: Path) -> dict:
+    """How often dossiers report each missing input, and low-confidence PRs."""
+    needs: dict[str, int] = {}
+    low = []
+    total = 0
+    for p in glob.glob(str(data_dir / "dossier" / "*" / "latest")):
+        d = _read_json(Path(p).parent / f"{Path(p).read_text().strip()}.json") or {}
+        r = d.get("result") or {}
+        if not r:
+            continue
+        total += 1
+        for x in r.get("needs") or []:
+            needs[x] = needs.get(x, 0) + 1
+        if r.get("confidence") == "low":
+            low.append(int(Path(p).parent.name))
+    return {"total": total, "needs": dict(sorted(needs.items(), key=lambda kv: -kv[1])), "low_confidence": sorted(low)}
+
+
 def counts(data_dir: Path) -> dict:
     idx = _read_json(data_dir / "extract" / "index.json") or {}
     dossiers = len([p for p in glob.glob(str(data_dir / "dossier" / "*" / "latest"))])
@@ -111,6 +129,7 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     batches = batch_rows(data_dir, lookup)
     sp = spend(data_dir)
     ct = counts(data_dir)
+    ns = needs_summary(data_dir)
     logs = sorted(glob.glob(str(data_dir / "logs" / "*.log")), reverse=True)[:log_count]
     (site_dir / "status" / "logs").mkdir(parents=True, exist_ok=True)
     log_links = []
@@ -121,7 +140,7 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     now = _now()
     running = bool(steps) and not any(m.startswith("done") or m.startswith("FAILED") for _, m in steps)
     payload = {"generated": now.isoformat(timespec="seconds"), "running": running, "current_run": steps,
-               "batches": batches, "spend": sp, "counts": ct, "next_runs": next_runs, "logs": log_links}
+               "batches": batches, "spend": sp, "counts": ct, "needs": ns, "next_runs": next_runs, "logs": log_links}
     with open(site_dir / "status.json", "w") as f:
         json.dump(payload, f, indent=1)
 
@@ -155,6 +174,10 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     b.append(f'<h2>Data</h2><table><tr><td>Open PRs extracted</td><td>{_e(ct["open_prs"])} at {_e((ct["extracted_at"] or "")[:16])}</td></tr>'
              f'<tr><td>PRs with a dossier</td><td>{ct["dossiers"]}</td></tr><tr><td>PRs with display lines</td><td>{ct["displays"]}</td></tr>'
              f'<tr><td>Categories ranked</td><td>{_e(", ".join(f"{k} ({v})" for k, v in ct["ranked_categories"].items()) or "none")}</td></tr></table>')
+    if ns["total"]:
+        b.append('<h2>What the model says it was missing</h2><p class="muted">From the <code>needs</code> field of each dossier; recurring items are data-source work.</p>'
+                 + ('<table><tr><th>Missing input</th><th>Dossiers</th></tr>' + "".join(f'<tr><td>{_e(k)}</td><td>{v}</td></tr>' for k, v in ns["needs"].items()) + '</table>' if ns["needs"] else '<p>Nothing reported.</p>')
+                 + (f'<p>Low-confidence assessments: {", ".join("#" + str(n) for n in ns["low_confidence"][:40])}</p>' if ns["low_confidence"] else ""))
     b.append('<h2>Run logs</h2>' + ('<ul>' + "".join(f'<li><a href="status/logs/{_e(n)}">{_e(n)}</a></li>' for n in log_links) + '</ul>' if log_links else '<p>None yet.</p>'))
     b.append('</body></html>')
     (site_dir / "status.html").write_text("".join(b))
