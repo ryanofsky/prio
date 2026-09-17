@@ -31,6 +31,11 @@ from .prices import cost_usd, usage_dict
 
 ENGINE_ROOT = Path(__file__).resolve().parent.parent
 DEFINITIONS = ["priority.md", "bands.md", "reviewability.md", "agreement.md"]
+OBJECTION_KINDS = ["safety", "correctness", "approach", "scope", "interface", "maintenance", "usefulness", "style"]
+BLOCKING_KINDS_ANYONE = {"safety", "correctness"}
+BLOCKING_KINDS_MEMBER = {"approach", "scope", "interface"}
+MEMBER_ASSOC = {"MEMBER", "OWNER", "COLLABORATOR"}
+BOT_LOGINS = {"DrahtBot", "fanquake-bot", "github-actions"}
 
 BANDS = ["P1", "P2", "P3", "P4", "Unranked"]
 NEEDS = ["diff", "full_diff", "linked_issue_body", "base_pr_discussion", "conflicting_pr_details", "ci_status",
@@ -87,23 +92,40 @@ SCHEMA = {
         },
         "agreement": {
             "type": "object", "additionalProperties": False,
-            "required": ["objections", "support", "state", "summary", "reason", "evidence"],
+            "required": ["participants", "objections", "support", "state", "summary", "reason", "evidence"],
             "properties": {
+                "participants": {
+                    "type": "array",
+                    "description": "One entry for every person listed under participants in the user turn (everyone but the author and bots who commented or reviewed), filled in first. This is the checklist: a reviewer whose comments you have not read cannot be classified.",
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["login", "stance", "note"],
+                        "properties": {
+                            "login": {"type": "string"},
+                            "stance": {"type": "string", "enum": ["objection", "support", "question", "neutral"],
+                                       "description": "objection if any of their comments names a cost of merging (then it must appear in objections); support if they spoke for the PR; question if they only asked and were answered; neutral for nits, process, or off-topic"},
+                            "note": {"type": "string", "description": "a few words on what they said"},
+                        },
+                    },
+                },
                 "objections": {
                     "type": "array",
                     "description": "Every objection in the thread, one entry each, filled in before choosing the state. Include concerns phrased tentatively ('may violate', 'I'm uncomfortable with', 'not sure this is safe') when they name a real cost of merging: a doubt about a security or correctness assumption from an experienced reviewer is an objection with a harm. Empty only if nobody raised a cost.",
                     "items": {
                         "type": "object", "additionalProperties": False,
-                        "required": ["reviewer", "harm", "blocking", "author_replied", "fix_pushed", "status", "evidence"],
+                        "required": ["reviewer", "kind", "harm", "blocking", "author_replied", "fix_pushed", "status", "evidence", "resolution_evidence"],
                         "properties": {
                             "reviewer": {"type": "string", "description": "GitHub login"},
+                            "kind": {"type": "string", "enum": OBJECTION_KINDS,
+                                     "description": "safety = security, privacy, DoS, funds; correctness = a bug or wrong behavior; approach = the design or the way it is done is wrong, or should be done elsewhere; scope = should be split, is too big, or belongs in another PR; interface = wrong API, option, RPC, or user-facing shape; maintenance = burden or complexity; usefulness = not needed; style = naming, structure, commit layout, nits"},
                             "harm": {"type": "string", "description": "the concrete cost of merging that the reviewer names; empty if it is only 'not useful' or style"},
-                            "blocking": {"type": "boolean", "description": "true if the reviewer treats it as a reason not to merge (a NACK word is not required; 'cannot be merged' from a maintainer is blocking)"},
-                            "author_replied": {"type": "boolean"},
+                            "blocking": {"type": "boolean", "description": "true if the reviewer says or clearly implies it should not merge as-is (a NACK word is not required). The pipeline also treats open safety and correctness objections, and open approach, scope or interface objections from members, as blocking unless the reviewer said otherwise"},
+                            "author_replied": {"type": "boolean", "description": "true only if the author posted a reply to this objection (a comment or review reply); a push without a comment is not a reply"},
                             "fix_pushed": {"type": "boolean", "description": "true only if a later push actually implements the change; agreeing in principle is false"},
                             "status": {"type": "string", "enum": ["open", "resolved", "agreed_to_disagree"],
-                                       "description": "resolved = fix pushed, or author rejected with rationale and the reviewer did not push back; agreed_to_disagree = both accept the PR can proceed; otherwise open"},
-                            "evidence": {"type": "string", "description": "date and a short quote"},
+                                       "description": "resolved = fix pushed and the reviewer did not object again, or author rejected with rationale and the reviewer did not push back; agreed_to_disagree = both accept the PR can proceed; otherwise open"},
+                            "evidence": {"type": "string", "description": "date (YYYY-MM-DD) and a short quote of the objection"},
+                            "resolution_evidence": {"type": "string", "description": "for resolved or agreed_to_disagree: date and a short quote of the reviewer's follow-up or the author's reply that settled it; empty if there is none (then the objection is open)"},
                         },
                     },
                 },
@@ -267,7 +289,10 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int, git_dir: Pat
         "waiting_on_author_days": sig["waiting_on_author_days"],
         "distinct_reviewers": len(rec["reviews"]["distinct_reviewers"]),
     }
+    tf = thread_facts(rec)
     facts = {
+        "participants": [f"{who} ({c['assoc'].lower()}, {c['n']} comment{'s' if c['n'] != 1 else ''}, {c['first']} to {c['last']})"
+                         for who, c in sorted(tf["commenters"].items(), key=lambda kv: kv[1]["first"])] or ["(nobody but the author)"],
         "ack_table_from_bot": ack_table,
         "stack": rec["stack"],
         "conflicts_with_open_prs": [f"#{c['number']} {c['title']} ({c['author']})" for c in db.get("conflicts", [])[:25]]
@@ -403,6 +428,72 @@ def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:
     return p
 
 
+def _is_bot(login: str) -> bool:
+    return login in BOT_LOGINS or login.endswith("[bot]")
+
+
+def thread_facts(rec: dict) -> dict:
+    """What the derivation checks the model's enumeration against: who
+    commented (login, association, dates) and when the author spoke."""
+    author = rec["author"]
+    commenters: dict[str, dict] = {}
+    author_dates: list[str] = []
+    for e in rec.get("timeline") or []:
+        if e.get("kind") not in ("comment", "review", "review_comment"):
+            continue
+        who = e.get("who") or ""
+        t = (e.get("t") or "")[:10]
+        if who == author:
+            author_dates.append(t)
+            continue
+        if not who or _is_bot(who):
+            continue
+        c = commenters.setdefault(who, {"assoc": e.get("assoc") or "NONE", "n": 0, "first": t, "last": t})
+        c["n"] += 1
+        c["last"] = max(c["last"], t)
+    return {"author": author, "commenters": commenters, "author_dates": sorted(author_dates)}
+
+
+_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def check_agreement(ag: dict, thread: dict | None) -> list[str]:
+    """Verify the enumeration against the thread and correct what can be
+    checked mechanically; returns the list of corrections made. Blocking is
+    derived from the objection kind and the reviewer's association; a
+    'resolved' objection with no resolution evidence is open; an
+    'author_replied' claim is dropped when the author posted nothing after
+    the objection; participants the model skipped are recorded."""
+    notes = []
+    commenters = (thread or {}).get("commenters") or {}
+    author_dates = (thread or {}).get("author_dates") or []
+    for o in ag.get("objections") or []:
+        assoc = commenters.get(o.get("reviewer") or "", {}).get("assoc", "NONE")
+        kind = o.get("kind")
+        if o.get("status") in ("resolved", "agreed_to_disagree") and not (o.get("resolution_evidence") or "").strip():
+            o["status_model"] = o["status"]
+            o["status"] = "open"
+            notes.append(f"{o.get('reviewer')}: {o['status_model']} without evidence, treated as open")
+        if not o.get("blocking") and o.get("status") == "open" and o.get("harm"):
+            if kind in BLOCKING_KINDS_ANYONE or (kind in BLOCKING_KINDS_MEMBER and assoc in MEMBER_ASSOC):
+                o["blocking"] = True
+                o["blocking_derived"] = f"{kind} objection from {assoc.lower()}"
+                notes.append(f"{o.get('reviewer')}: blocking (open {kind} objection from a {assoc.lower()})")
+        if o.get("author_replied") and thread is not None:
+            m = _DATE.search(o.get("evidence") or "")
+            if m and not any(d >= m.group(1) for d in author_dates):
+                o["author_replied_model"] = True
+                o["author_replied"] = False
+                notes.append(f"{o.get('reviewer')}: author has not commented since {m.group(1)}, author_replied cleared")
+    if thread is not None:
+        listed = {p.get("login") for p in ag.get("participants") or []}
+        missing = sorted(c for c in commenters if c not in listed)
+        if missing:
+            ag["missing_participants"] = missing
+            notes.append("participants not classified: " + ", ".join(missing))
+    return notes
+
+
 def derive_agreement(ag: dict) -> tuple[str, str]:
     """Agreement state from the enumerated objections and support, per
     definitions/agreement.md. Returns (state, one-line derivation)."""
@@ -429,7 +520,7 @@ def derive_agreement(ag: dict) -> tuple[str, str]:
     return "Crickets", "no substantive comment either way"
 
 
-def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | None = None) -> dict:
+def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | None = None, thread: dict | None = None) -> dict:
     text = next((b.text for b in msg.content if b.type == "text"), "")
     parsed = None
     err = None
@@ -442,9 +533,11 @@ def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | 
             err = f"json: {e}"
     if parsed and isinstance(parsed.get("agreement"), dict) and "objections" in parsed["agreement"]:
         ag = parsed["agreement"]
+        corrections = check_agreement(ag, thread)
         derived, why = derive_agreement(ag)
         ag["model_state"] = ag.get("state")
-        ag["derivation"] = why
+        ag["derivation"] = why + ("; corrections: " + "; ".join(corrections) if corrections else "")
+        ag["corrections"] = corrections
         ag["state"] = derived
     cost = getattr(msg.usage, "cost", None)
     if cost is None:
@@ -533,7 +626,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
                 print(f"  request failed: {res}", file=sys.stderr)
                 continue
             n, r, msg = res
-            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph})
+            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph}, thread_facts(r))
             p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} in={payload['usage']['input_tokens']} out={payload['usage']['output_tokens']} ${(payload['cost_usd'] or 0):.4f}"
@@ -552,7 +645,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         for n, r in todo.items():
             params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
             msg = client.messages.create(**params)
-            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph})
+            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph}, thread_facts(r))
             p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} {payload['usage']} ${payload['cost_usd']:.4f} -> {p}", file=sys.stderr)
@@ -568,7 +661,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         cid = f"{n}-{r['input_hash']}"
         params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
         requests.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(**params)))
-        manifest.append({"custom_id": cid, "number": n, "input_hash": r["input_hash"]})
+        manifest.append({"custom_id": cid, "number": n, "input_hash": r["input_hash"], "thread": thread_facts(r)})
     batch = client.messages.batches.create(requests=requests)
     bdir = out_dir / "batches"
     bdir.mkdir(parents=True, exist_ok=True)
@@ -650,7 +743,7 @@ def cmd_collect(out_dir: Path, batch_id: str | None, wait: bool) -> dict:
                     extra.update(stage="display", dossier=m["dossier"])
                 elif meta.get("prompt_hash"):
                     extra["prompt_hash"] = meta["prompt_hash"]
-                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message, extra)
+                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message, extra, m.get("thread"))
                 store(out_dir, m["number"], m.get("stem") or dossier_stem(payload), payload)
                 total += payload["cost_usd"] or 0
                 ok += 1
