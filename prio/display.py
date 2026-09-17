@@ -81,6 +81,23 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
     print(f"{len(dossiers)} dossiers, {len(todo)} need display lines", file=sys.stderr)
     if not todo:
         return {"submitted": 0}
+    from .openrouter import is_openrouter, chat, run_many
+    if is_openrouter(model):
+        total = 0.0
+        def one(item):
+            n, d = item
+            return n, d, chat(model, build_system(), build_user(recs[n], d["result"]), SCHEMA, 2000)
+        for res in run_many(list(todo.items()), one):
+            if isinstance(res, Exception):
+                print(f"  request failed: {res}", file=sys.stderr)
+                continue
+            n, d, msg = res
+            payload = _result_payload(n, d["input_hash"], model, False, msg, {"stage": "display"})
+            store(out_dir, n, d["input_hash"], payload)
+            total += payload["cost_usd"] or 0
+            print(f"  #{n}: {payload['stop_reason']} ${(payload['cost_usd'] or 0):.4f}" + (f" ERROR {payload['error']}" if payload["error"] else ""), file=sys.stderr)
+        print(f"total ${total:.4f}", file=sys.stderr)
+        return {"completed": len(todo), "cost_usd": round(total, 4)}
     client = _client()
     if dry_run:
         tot = 0

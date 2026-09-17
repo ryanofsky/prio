@@ -338,10 +338,14 @@ def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | 
             parsed = json.loads(text)
         except json.JSONDecodeError as e:
             err = f"json: {e}"
+    cost = getattr(msg.usage, "cost", None)
+    if cost is None:
+        cost = cost_usd(model, msg.usage, batch)
     return {
         "number": n, "input_hash": h, "model": model, "batch": batch, "created": _now(),
+        "provider": getattr(msg, "provider", None) or None,
         "stop_reason": msg.stop_reason, "usage": usage_dict(msg.usage),
-        "cost_usd": cost_usd(model, msg.usage, batch), "error": err,
+        "cost_usd": cost, "error": err,
         "result": parsed, "raw_text": None if parsed else text, **(extra or {}),
     }
 
@@ -399,6 +403,29 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         print("\n===== SAMPLE USER TURN =====\n" + u0[:6000] + ("\n...[truncated for display]" if len(u0) > 6000 else ""))
         return {"dry_run": True, "count": len(todo)}
 
+    from .openrouter import is_openrouter, chat, run_many
+    if is_openrouter(model):
+        if dry_run:
+            print(f"openrouter model {model}: no token counting; {len(todo)} PRs would be sent synchronously (4 at a time)", file=sys.stderr)
+            return {"dry_run": True, "count": len(todo)}
+        total = 0.0
+        items = list(todo.items())
+        def one(item):
+            n, r = item
+            msg = chat(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), SCHEMA, max_tokens)
+            return n, r, msg
+        for res in run_many(items, one):
+            if isinstance(res, Exception):
+                print(f"  request failed: {res}", file=sys.stderr)
+                continue
+            n, r, msg = res
+            payload = _result_payload(n, r["input_hash"], model, False, msg)
+            p = store(out_dir, n, r["input_hash"], payload)
+            total += payload["cost_usd"] or 0
+            print(f"  #{n}: {payload['stop_reason']} in={payload['usage']['input_tokens']} out={payload['usage']['output_tokens']} ${(payload['cost_usd'] or 0):.4f}"
+                  + (f" ERROR {payload['error']}" if payload["error"] else ""), file=sys.stderr)
+        print(f"total ${total:.4f}", file=sys.stderr)
+        return {"completed": len(items), "cost_usd": round(total, 4)}
     client = _client()
     if max_cost is not None:
         est = estimate_cost(client, model, system, [build_user(r, cats, budget_tokens, git_dir, patch_chars) for r in todo.values()], sync)
