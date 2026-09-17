@@ -63,4 +63,9 @@ Rules:
   and each category's `reason_tag` is one or two words for why the band
   applies. Full reasoning goes in the `reason` and `rationale` fields,
   which readers see on expand.
+- Write every `reason`, `rationale`, and `summary` so that its first
+  sentence stands alone as the short version: the table shows only the
+  first one or two sentences, and the rest appears on a detail page.
+  Lead with the conclusion and the single strongest piece of evidence;
+  put qualifications after.
 - Be concrete and brief. No hedging phrases, no restating the rules.
