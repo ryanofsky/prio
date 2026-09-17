@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--only", help="comma-separated PR numbers to extract")
     ex.add_argument("--include-closed", action="store_true")
     ex.add_argument("--refs-index", type=Path, help="TSV (number, type, state, merged_at, title) covering all PRs/issues, to resolve references")
+    ex.add_argument("--git", type=Path, help="git sidecar output dir (from 'prio git'); adds changed paths and test lines")
 
     do = sub.add_parser("dossier", help="stage 2: per-PR model assessment")
     dsub = do.add_subparsers(dest="dcmd", required=True)
@@ -34,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     ds.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     ds.add_argument("--budget-tokens", type=int, default=40000, help="approximate cap on the PR content per request")
     ds.add_argument("--max-tokens", type=int, default=16000)
+    ds.add_argument("--git", type=Path, help="git sidecar output dir; includes the patch in the prompt")
+    ds.add_argument("--patch-chars", type=int, default=80000, help="max patch characters per request (smallest files first)")
     ds.add_argument("--dry-run", action="store_true", help="count tokens, estimate cost, print one prompt; no model calls")
     ds.add_argument("--sync", action="store_true", help="call the API directly instead of the Batch API")
     ds.add_argument("--force", action="store_true", help="re-assess even if a dossier for this input hash exists")
@@ -51,6 +54,25 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--category", action="append", help="limit to a category (repeatable)")
     rp.add_argument("--no-expand", action="store_true", help="tables only")
 
+    gd = sub.add_parser("git", help="sidecar: fetch PR heads into a local repo and extract file lists and patches")
+    gd.add_argument("--repo", required=True, type=Path, help="bare clone to create/use")
+    gd.add_argument("--url", default="https://github.com/bitcoin/bitcoin.git", help="clone URL (or local mirror path)")
+    gd.add_argument("--reference", type=Path, help="existing local clone to borrow objects from")
+    gd.add_argument("--extract", required=True, type=Path)
+    gd.add_argument("--out", required=True, type=Path, help="writes <n>.json per PR")
+    gd.add_argument("--only")
+    gd.add_argument("--branch", default="master")
+    gd.add_argument("--pull-ref", default="refs/pull/{n}/head", help="remote ref template for a PR head")
+    gd.add_argument("--branch-ref", default="refs/heads/{branch}", help="remote ref template for the default branch")
+    gd.add_argument("--budget-chars", type=int, default=120000, help="patch budget per PR (chars)")
+    gd.add_argument("--git-config", action="append", default=[], metavar="KEY=VALUE",
+                    help="git setting for this run only, e.g. safe.directory=/path/to/mirror (repeatable)")
+
+    rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
+    rd.add_argument("--extract", required=True, type=Path)
+    rd.add_argument("--dossier", required=True, type=Path)
+    rd.add_argument("--out", required=True, type=Path)
+
     args = ap.parse_args(argv)
     if not args.config:
         ap.error("--config is required (or set PRIO_CONFIG)")
@@ -60,13 +82,15 @@ def main(argv: list[str] | None = None) -> int:
         from . import extract
 
         only = {int(x) for x in args.only.split(",")} if args.only else None
-        res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed, refs_index=args.refs_index)
+        res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed,
+                          refs_index=args.refs_index, git_dir=args.git)
     elif args.cmd == "dossier" and args.dcmd == "submit":
         from . import dossier
 
         only = {int(x) for x in args.only.split(",")} if args.only else None
         res = dossier.cmd_submit(cfg, args.extract, args.out, only, args.model, args.effort,
-                                 args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force)
+                                 args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force,
+                                 args.git, args.patch_chars)
     elif args.cmd == "dossier" and args.dcmd == "collect":
         from . import dossier
 
@@ -75,6 +99,16 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_status(args.out, args.all)
+    elif args.cmd == "git":
+        from . import gitdata
+
+        only = {int(x) for x in args.only.split(",")} if args.only else None
+        res = gitdata.run(args.repo, args.url, args.reference, args.extract, args.out, only, args.branch,
+                          args.budget_chars, args.pull_ref, args.branch_ref, args.git_config)
+    elif args.cmd == "render":
+        from . import render
+
+        res = render.render(cfg, args.extract, args.dossier, args.out)
     elif args.cmd == "report":
         from . import report
 
