@@ -56,18 +56,20 @@ td.rev, td.agree, td.size, td.reviews { white-space: nowrap; }
 td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-style: italic; color: #555; }
 .detail ul { margin: 0; padding-left: 1.1rem; } .detail li { margin: .15rem 0; }
 .detail .k { color: var(--muted); }
-.legend { font-size: .8rem; color: var(--muted); background: #f7f7f7; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0 0 1.5rem; }
+.legend { font-size: .8rem; color: var(--muted); background: #f7f7f7; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0; }
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
-.more { font-size: .8rem; text-align: right; margin-top: .3rem; }
+.more { font-size: .8rem; margin-top: .3rem; }
 nav.top { font-size: .85rem; margin-bottom: .6rem; } nav.top a { margin-right: 1rem; }
 h1 a { color: inherit; } h1 a:hover { text-decoration: underline; }
 .intro { max-width: 60rem; } .intro p { margin: .4rem 0 .8rem; }
-ul.catlist { line-height: 1.7; } ul.catlist .editor { color: var(--muted); font-size: .9rem; }
-.foot { margin-top: 2rem; } .foot .sub { margin-top: .5rem; }
+ul.catlist { line-height: 1.7; padding-left: 1.2rem; } ul.catlist .editor { color: var(--muted); font-size: .85rem; }
+.foot { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: .6rem; } .foot .sub { margin: .4rem 0 0; }
 .legend div { margin: .15rem 0; }
-.covers { max-width: 60rem; } .covers h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; } .covers p { margin: .4rem 0; } .covers ul { margin: .2rem 0; }
+.covers { font-size: .9rem; background: #fff; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem .6rem; margin: 0 0 1.5rem; }
+.covers h2 { font-size: 1rem; margin: .8rem 0 .2rem; } .covers p { margin: .3rem 0; } .covers ul { margin: .2rem 0; }
+.covers .src { font-size: .8rem; color: var(--muted); margin: .1rem 0 .2rem; }
 .prpage .lead { font-weight: 600; } .prpage ul { margin: .3rem 0; padding-left: 1.2rem; }
 .prpage h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; border-bottom: 1px solid var(--border); }
 .prpage .box { background: #fff; border: 1px solid var(--border); padding: .6rem .8rem; margin: .4rem 0; }
@@ -347,6 +349,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
               '<div>Reviews: current code-review ACKs, then (+stale ACKs) and <b style="color:#b00020">-NACKs</b>; greener = more ACKs.</div>'
               '<div>Size: added/deleted lines, tests in parentheses; greener = smaller.</div></div>')
     nav = '<nav class="top"><a href="index.html">Home</a></nav>'
+    repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     pages = []
     for name, rows in sorted(members.items()):
         cat = cats.get(name)
@@ -354,7 +357,9 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         head = ('<table><thead><tr><th>PR</th><th>Priority</th><th>Reviewability</th><th>Reviews</th>'
                 '<th>Agreement</th><th>Size</th></tr></thead><tbody>')
         body_rows = "".join(_row(recs[n], dossiers[n], c, name, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
-        covers = f'<div class="covers">{md_to_html(cat.body)}</div>' if cat else ""
+        covers = (f'<div class="covers"><div class="src">Category definition: <a href="{_e(cat_src(name))}">{_e(repo_short)}/categories/{_e(name)}.md</a>'
+                  + (f' · editor <a href="https://github.com/{_e(cat.owner)}">{_e(cat.owner)}</a>' if cat.owner else "") + '</div>'
+                  f'{md_to_html(cat.body)}</div>') if cat else ""
         callout = ('<div class="banner">Every band, state, and summary on this page is model output against a '
                    'written category definition, shown with its rationale. It is one person\'s tool for finding PRs worth '
                    'reviewing, not a project process. Click any cell\'s summary text to expand the row; hover a cell for the same text.'
@@ -372,15 +377,16 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
                                                           nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
     repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     default_intro = (
-        "This site helps reviewers find important pull requests to review in a category they care about. "
-        "A language model sorts open pull requests into categories and ranks them against written category definitions."
+        "This site helps reviewers find pull requests to review in a category they care about. "
+        "A language model sorts open pull requests into categories and ranks them against written category definitions. "
+        "It is an unofficial tool, not a project process."
         + (f' The definitions live in <a href="{_e(repo_url)}">{_e(repo_short)}</a> and can be changed by pull request. '
            'Anyone can volunteer to edit an existing category or create a new one.' if repo_url else ""))
     intro = '<div class="intro"><p>' + (_e(project["description"]) if project.get("description") else default_intro) + '</p></div>'
     catlist = '<ul class="catlist">' + "".join(
         f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a>'
-        + (f' <span class="editor">(editor: <a href="{_e(cat_src(name))}">{_e(cats[name].owner)}</a>)</span>' if name in cats and cats[name].owner else "")
-        + '</li>'
+        + f' <span class="editor">· <a href="{_e(cat_src(name))}">definition</a>'
+        + (f', editor <a href="https://github.com/{_e(cats[name].owner)}">{_e(cats[name].owner)}</a>' if name in cats and cats[name].owner else "") + '</span></li>'
         for name, rows in sorted(members.items(), key=lambda kv: (cats[kv[0]].title if kv[0] in cats else kv[0]).lower())) + "</ul>"
     index = intro + catlist + f'<div class="foot"><div class="sub" title="{len(dossiers)} PRs assessed">generated {stamp}</div></div>'
     (out_dir / "index.html").write_text(_page(cfg.site_title, index))
