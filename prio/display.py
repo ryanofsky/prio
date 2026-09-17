@@ -91,8 +91,12 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
     print(f"{len(dossiers)} dossiers, {len(todo)} need display lines", file=sys.stderr)
     if not todo:
         return {"submitted": 0}
-    from .openrouter import is_openrouter, chat, run_many
+    from .openrouter import is_openrouter, chat, run_many, estimate_cost as or_estimate
     if is_openrouter(model):
+        if dry_run:
+            est = or_estimate(model, build_system()[0]["text"], [build_user(recs[n], d["result"]) for n, d in todo.items()], out_per=600)
+            print(f"{model}: {len(todo)} PRs synchronously; estimated ~${est:.2f}" if est is not None else f"{model}: {len(todo)} PRs; no price found", file=sys.stderr)
+            return {"dry_run": True, "count": len(todo), "estimated_cost": None if est is None else round(est, 2)}
         total = 0.0
         def one(item):
             n, d = item

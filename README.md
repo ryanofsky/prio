@@ -131,6 +131,37 @@ rather than appended. A band the pass changed is shown with its reason in
 the priority cell; the pass's notes on review order and overlapping PRs
 are on `rank/<category>.html`, linked from the legend.
 
+### Re-assess after a prompt change
+
+A dossier is keyed by the PR's input hash and the model, so editing a
+prompt, a definition, or a category file invalidates nothing: the next
+run re-assesses only PRs whose facts changed. Each dossier also records
+a short hash of the prompt it was made with (system prompt plus output
+schema), and that hash is part of its file name, so a forced
+re-assessment after a prompt change is a new file next to the old one,
+which the display and rank stages notice.
+
+`prio select` names the PRs worth re-doing after a change, by rule, and
+prints their numbers for `--only`:
+
+```
+# The first 10 rows of every category page, plus any PR with a feedback
+# entry, skipping PRs already assessed with the current prompt.
+prio select --extract EXTRACT --dossier DOSSIER --rank RANK --top 10 --flagged --if-stale > prs.txt
+prio dossier submit --extract EXTRACT --out DOSSIER --git GIT --only @prs.txt --force --max-cost 5 --dry-run
+prio dossier submit --extract EXTRACT --out DOSSIER --git GIT --only @prs.txt --force --max-cost 5 --sync
+prio display submit --extract EXTRACT --dossier DOSSIER --out DISPLAY   # picks up the new dossiers by itself
+
+# Other rules (unioned): --band P1,P2  --agreement Strong,Positive  --reviewability Ready
+# --confidence low  --missing  --failed.  Filters: --category NAME (repeatable), --if-stale
+# [--model M].  --format json shows why each PR was picked.
+```
+
+On the pipeline host, `scripts/reassess.sh SELECT-ARGS...` does the
+whole sequence (select, dossier, display, render, publish) under a cost
+cap, without touching the weekly ranking; re-assessed PRs are slotted
+among the ranked ones by score until the next pass.
+
 ### Report
 
 ```
@@ -150,6 +181,7 @@ prio/            Python package
   dossier.py     stage: per-PR assessment (Batch API)
   display.py     stage: short table lines from a dossier
   rank.py        stage: per-category listwise pass
+  select.py      picks PRs for a targeted re-assessment (prompt-hash aware)
   render.py      stage: static site
   acks.py        ACK/NACK vocabulary parser (cross-check for adapters)
   adapters/      parsers for project bots (drahtbot)
@@ -163,7 +195,7 @@ definitions/     shared definitions used in every prompt and shown on the site
   agreement.md
 prompts/         prompt text for the dossier, display, and rank stages
 nix/             NixOS module: services.prio (daily pipeline, weekly ranking)
-scripts/         refs-index.sh (resolves cited PR/issue numbers from a full backup)
+scripts/         refs-index.sh (resolves cited PR/issue numbers from a full backup), reassess.sh (targeted re-assessment on the host)
 ```
 
 ## Config repo schema

@@ -11,6 +11,20 @@ from pathlib import Path
 from .config import load_config
 
 
+def parse_only(spec: str | None) -> set[int] | None:
+    """PR numbers from --only: comma- or whitespace-separated, or @FILE (one
+    per line, as 'prio select' prints), or '-' for stdin."""
+    if not spec:
+        return None
+    if spec == "-":
+        text = sys.stdin.read()
+    elif spec.startswith("@"):
+        text = Path(spec[1:]).read_text()
+    else:
+        text = spec
+    return {int(x) for x in text.replace(",", " ").split()} or None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="prio")
     ap.add_argument("--config", type=Path, default=os.environ.get("PRIO_CONFIG"),
@@ -30,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     ds = dsub.add_parser("submit", help="build prompts and submit (batch by default)")
     ds.add_argument("--extract", required=True, type=Path, help="extract output dir (contains prs/)")
     ds.add_argument("--out", required=True, type=Path, help="dossier output dir")
-    ds.add_argument("--only", help="comma-separated PR numbers")
+    ds.add_argument("--only", help="PR numbers (comma-separated), @FILE with one per line, or - for stdin")
     ds.add_argument("--model", default="claude-opus-5")
     ds.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     ds.add_argument("--budget-tokens", type=int, default=40000, help="approximate cap on the PR content per request")
@@ -99,6 +113,23 @@ def main(argv: list[str] | None = None) -> int:
     rk.add_argument("--dry-run", action="store_true")
     rk.add_argument("--force", action="store_true", help="re-rank even if nothing changed since the last ranking")
 
+    se = sub.add_parser("select", help="pick PRs for a targeted re-assessment; prints numbers for 'dossier submit --only @FILE --force'")
+    se.add_argument("--extract", required=True, type=Path)
+    se.add_argument("--dossier", required=True, type=Path)
+    se.add_argument("--rank", type=Path, help="rank output dir, for site order with --top")
+    se.add_argument("--top", type=int, help="first N rows of every category page")
+    se.add_argument("--band", help="comma-separated bands, e.g. P1,P2")
+    se.add_argument("--agreement", help="comma-separated Agreement states")
+    se.add_argument("--reviewability", help="comma-separated Reviewability states")
+    se.add_argument("--confidence", help="comma-separated confidence levels, e.g. low")
+    se.add_argument("--flagged", action="store_true", help="PRs with a feedback entry in the config repo")
+    se.add_argument("--missing", action="store_true", help="open PRs with no usable dossier")
+    se.add_argument("--failed", action="store_true", help="PRs whose latest stored output is a failure")
+    se.add_argument("--category", action="append", help="keep only members of this category (repeatable)")
+    se.add_argument("--if-stale", action="store_true", help="keep only PRs whose latest dossier used a different prompt (or model, with --model)")
+    se.add_argument("--model", help="with --if-stale: also treat dossiers by another model as stale")
+    se.add_argument("--format", default="lines", choices=["lines", "comma", "json"])
+
     st = sub.add_parser("status-page", help="write status.html/status.json into the site dir from pipeline state")
     st.add_argument("--data-dir", required=True, type=Path)
     st.add_argument("--site-dir", required=True, type=Path)
@@ -120,13 +151,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "extract":
         from . import extract
 
-        only = {int(x) for x in args.only.split(",")} if args.only else None
+        only = parse_only(args.only)
         res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed,
                           refs_index=args.refs_index, git_dir=args.git)
     elif args.cmd == "dossier" and args.dcmd == "submit":
         from . import dossier
 
-        only = {int(x) for x in args.only.split(",")} if args.only else None
+        only = parse_only(args.only)
         res = dossier.cmd_submit(cfg, args.extract, args.out, only, args.model, args.effort,
                                  args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force,
                                  args.git, args.patch_chars, args.max_cost)
@@ -141,13 +172,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "git":
         from . import gitdata
 
-        only = {int(x) for x in args.only.split(",")} if args.only else None
+        only = parse_only(args.only)
         res = gitdata.run(args.repo, args.url, args.reference, args.extract, args.out, only, args.branch,
                           args.budget_chars, args.pull_ref, args.branch_ref, args.git_config)
     elif args.cmd == "display" and args.pcmd == "submit":
         from . import display
 
-        only = {int(x) for x in args.only.split(",")} if args.only else None
+        only = parse_only(args.only)
         res = display.cmd_submit(cfg, args.extract, args.dossier, args.out, only, args.model, args.dry_run, args.sync, args.force)
     elif args.cmd == "display" and args.pcmd == "collect":
         from . import dossier
@@ -157,6 +188,16 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_status(args.out, args.all)
+    elif args.cmd == "select":
+        from . import select
+
+        split = lambda v: set(v.split(",")) if v else None  # noqa: E731
+        select.run(cfg, args.extract, args.dossier, args.rank, top=args.top, bands=split(args.band),
+                   agreement=split(args.agreement), reviewability=split(args.reviewability),
+                   confidence=split(args.confidence), flagged=args.flagged, missing=args.missing,
+                   failed=args.failed, categories=set(args.category) if args.category else None,
+                   if_stale=args.if_stale, model=args.model, fmt=args.format)
+        return 0
     elif args.cmd == "status-page":
         from . import status
 

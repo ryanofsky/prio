@@ -15,6 +15,8 @@ estimate so spend is visible without opening the console.
 
 from __future__ import annotations
 
+import glob
+import hashlib
 import json
 import os
 import re
@@ -353,28 +355,42 @@ def model_slug(model: str) -> str:
     return re.sub(r"[^A-Za-z0-9.]+", "-", model).strip("-")
 
 
-def stem_for(h: str, model: str) -> str:
-    """File stem of a stored output: input hash plus model, so assessments of
-    the same input by different models coexist and 'latest' picks one."""
-    return f"{h}-{model_slug(model)}"
+def prompt_hash(system: list[dict]) -> str:
+    """Short hash of everything the model is told besides the PR itself: the
+    system prompt (instructions, definitions, category texts, thresholds)
+    and the output schema. Stored with each dossier and made part of its
+    file stem, so a re-assessment after a prompt change is a new file that
+    the display and rank stages notice, while the old one stays for
+    comparison. Not part of what decides whether a PR needs a dossier: a
+    prompt change invalidates nothing by itself (see 'prio select')."""
+    text = "\n".join(b["text"] for b in system) + "\n" + json.dumps(SCHEMA, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()[:8]
+
+
+def stem_for(h: str, model: str, ph: str | None = None) -> str:
+    """File stem of a stored output: input hash plus model (plus prompt hash
+    for dossiers written since prompt hashing began), so assessments of the
+    same input by different models or prompts coexist and 'latest' picks one."""
+    return f"{h}-{model_slug(model)}" + (f"-p{ph}" if ph else "")
 
 
 def dossier_stem(d: dict) -> str:
-    return stem_for(d["input_hash"], d.get("model") or "")
+    return stem_for(d["input_hash"], d.get("model") or "", d.get("prompt_hash"))
 
 
 def have_dossier(out_dir: Path, n: int, h: str, model: str) -> bool:
-    """True only for a stored dossier with a usable result; a stored failure
-    (request error, unparseable JSON) counts as missing so the next run
-    retries it."""
-    p = out_dir / str(n) / f"{stem_for(h, model)}.json"
-    if not p.exists():
-        return False
-    try:
-        with open(p) as f:
-            return json.load(f).get("result") is not None
-    except (OSError, json.JSONDecodeError):
-        return False
+    """True only for a stored dossier with a usable result for this input and
+    model, under any prompt version; a stored failure (request error,
+    unparseable JSON) counts as missing so the next run retries it."""
+    base = str(out_dir / str(n) / stem_for(h, model))
+    for p in [base + ".json"] + glob.glob(base + "-p????????.json"):
+        try:
+            with open(p) as f:
+                if json.load(f).get("result") is not None:
+                    return True
+        except (OSError, json.JSONDecodeError):
+            pass
+    return False
 
 
 def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:
@@ -468,6 +484,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
                git_dir: Path | None = None, patch_chars: int = 80000, max_cost: float | None = None) -> dict:
     cats = load_categories(cfg.categories_dir)
     system = build_system(cfg, cats)
+    ph = prompt_hash(system)
     recs = load_extract(extract_dir, only)
     todo = {n: r for n, r in recs.items() if force or not have_dossier(out_dir, n, r["input_hash"], model)}
     print(f"{len(recs)} PRs loaded, {len(todo)} need a dossier", file=sys.stderr)
@@ -516,7 +533,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
                 print(f"  request failed: {res}", file=sys.stderr)
                 continue
             n, r, msg = res
-            payload = _result_payload(n, r["input_hash"], model, False, msg)
+            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph})
             p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} in={payload['usage']['input_tokens']} out={payload['usage']['output_tokens']} ${(payload['cost_usd'] or 0):.4f}"
@@ -535,7 +552,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         for n, r in todo.items():
             params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
             msg = client.messages.create(**params)
-            payload = _result_payload(n, r["input_hash"], model, False, msg)
+            payload = _result_payload(n, r["input_hash"], model, False, msg, {"prompt_hash": ph})
             p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} {payload['usage']} ${payload['cost_usd']:.4f} -> {p}", file=sys.stderr)
@@ -556,7 +573,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     bdir = out_dir / "batches"
     bdir.mkdir(parents=True, exist_ok=True)
     with open(bdir / f"{batch.id}.json", "w") as f:
-        json.dump({"id": batch.id, "created": _now(), "model": model, "effort": effort,
+        json.dump({"id": batch.id, "created": _now(), "model": model, "effort": effort, "prompt_hash": ph,
                    "status": batch.processing_status, "requests": manifest}, f, indent=1)
     print(f"submitted batch {batch.id} with {len(requests)} requests ({model}, effort {effort})", file=sys.stderr)
     return {"batch": batch.id, "submitted": len(requests)}
@@ -628,8 +645,12 @@ def cmd_collect(out_dir: Path, batch_id: str | None, wait: bool) -> dict:
             if not m:
                 continue
             if res.result.type == "succeeded":
-                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message,
-                                          {"batch_id": bid, **({"stage": "display", "dossier": m["dossier"]} if m.get("stem") else {})})
+                extra = {"batch_id": bid}
+                if m.get("stem"):
+                    extra.update(stage="display", dossier=m["dossier"])
+                elif meta.get("prompt_hash"):
+                    extra["prompt_hash"] = meta["prompt_hash"]
+                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message, extra)
                 store(out_dir, m["number"], m.get("stem") or dossier_stem(payload), payload)
                 total += payload["cost_usd"] or 0
                 ok += 1
