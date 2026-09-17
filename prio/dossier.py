@@ -111,6 +111,13 @@ def build_system(cfg: Config, cats: list[Category]) -> list[dict]:
     for c in cats:
         parts.append(f"# Category: {c.name} ({c.title})\n\n" + c.body)
     parts.append(
+        "# Project thresholds\n\n"
+        f"waiting_on_author_days = {cfg.waiting_on_author_days} (a material reviewer request unanswered this long is Paused). "
+        f"stale_author_silent_days = {cfg.stale_author_silent_days} (no author activity this long is Stale on its own). "
+        "The signals block gives author_silent_days and waiting_on_author_days already computed; a force push counts as "
+        "author activity there, so a push without a reply may still leave a material question open."
+    )
+    parts.append(
         "# Output\n\nReturn one JSON object matching the provided schema. "
         "Factors are 0-3 (0 none, 1 minor, 2 clear, 3 major): security_stability, bug_severity, "
         "performance, user_value (feature solving a user pain point), leverage (unblocks other important work). "

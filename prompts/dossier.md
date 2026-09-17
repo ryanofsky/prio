@@ -27,7 +27,11 @@ Rules:
   fields.
 - Membership is inclusive. A PR belongs to every category whose area it
   touches or affects. It may be P1 in one category and P4 in another; say
-  so rather than forcing one home.
+  so rather than forcing one home. "Touches" means it changes the area's
+  behavior, interfaces, data, or the code someone maintaining that area
+  would review. A mechanical edit that only follows from a change
+  elsewhere (a call site updated for a new signature, a test harness
+  adjusted to keep compiling) does not make the PR a member.
 - Every priority band comes with a factor breakdown and a rationale that
   cites concrete evidence: quote or closely paraphrase a sentence from the
   description, a commit message, a linked issue, or a comment, with who
