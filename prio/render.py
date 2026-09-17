@@ -33,6 +33,15 @@ AGREEMENT_COLORS = {
     "Crickets": "#ffffff",
 }
 SIZE_COLORS = {"S": "#d9f2d9", "M": "#fff3c4", "L": "#ffe0b3", "XL": "#ffd6d6"}
+TEST_PREFIXES = ("test/", "src/test/", "src/wallet/test/", "src/qt/test/", "src/bench/", "ci/", "contrib/")
+_SIZE_CFG = {"small": 100, "medium": 400, "large": 1000}
+
+
+def cfg_bucket(lines: int) -> str:
+    if lines <= _SIZE_CFG["small"]: return "S"
+    if lines <= _SIZE_CFG["medium"]: return "M"
+    if lines <= _SIZE_CFG["large"]: return "L"
+    return "XL"
 
 CSS = """
 :root { --border:#ddd; --text:#222; --muted:#666; --link:#0645ad; }
@@ -256,13 +265,18 @@ def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_hre
     rw_brief, rw_lines, rw_links, rw_style = _reviews(rec)
     ag = r["agreement"]
     ag_style = f"background:{AGREEMENT_COLORS.get(ag['state'], '#fff')};"
-    sz_brief = f'+{rec["additions"]}/-{rec["deletions"]}'
-    if rec.get("test_lines"):
-        sz_brief += f' <span class="stale">({rec["test_lines"]} tests)</span>'
-    sz_lines = [f'{rec["changed_files"]} files', f'{rec["commit_count"]} commits']
-    if rec.get("test_lines") is not None:
-        sz_lines.append(f'{rec["test_lines"]} lines under test/bench/ci')
-    sz_style = f"background:{SIZE_COLORS.get(rec['size_bucket'], '#fff')};"
+    files = rec.get("files") or []
+    if files:
+        code_add = sum((f["add"] or 0) for f in files if not f["path"].startswith(TEST_PREFIXES))
+        test_add = sum((f["add"] or 0) for f in files if f["path"].startswith(TEST_PREFIXES))
+        sz_brief = f'{code_add:,}' + (f' <span class="stale">+ {test_add:,} tests</span>' if test_add else "")
+        sz_lines = [f'{code_add:,} lines added or modified outside tests', f'{test_add:,} lines added or modified in tests',
+                    f'{rec["deletions"]:,} lines removed in total', f'{rec["changed_files"]} files, {rec["commit_count"]} commits']
+        sz_style = f"background:{SIZE_COLORS.get(cfg_bucket(code_add), '#fff')};"
+    else:
+        sz_brief = f'+{rec["additions"]}/-{rec["deletions"]}'
+        sz_lines = [f'{rec["changed_files"]} files', f'{rec["commit_count"]} commits']
+        sz_style = f"background:{SIZE_COLORS.get(rec['size_bucket'], '#fff')};"
     cls = "unranked" if cat["band"] == "Unranked" else ""
     reviews_td = (f'<td class="reviews" title="{_e(chr(10).join(rw_lines))}" style="{rw_style}">'
                   f'<span class="brief">{rw_brief}</span><div class="detail">{rw_links or _ul(rw_lines)}</div></td>')
@@ -353,6 +367,7 @@ def load_rank(rank_dir: Path | None, cat_name: str) -> dict | None:
 def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None,
            rank_dir: Path | None = None) -> dict:
     cats = {c.name: c for c in load_categories(cfg.categories_dir)}
+    _SIZE_CFG.update({"small": cfg.size_small, "medium": cfg.size_medium, "large": cfg.size_large})
     if cfg.repos:
         _REPO_URL["url"] = f"https://github.com/{cfg.repos[0].full_name}"
     dossiers = load_latest(dossier_dir)
@@ -410,7 +425,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
               f'<span style="background:{REVIEWABILITY_COLORS["Paused"]}">Paused</span></div>'
               '<div>Agreement: ' + "".join(f'<span style="background:{v}">{k}</span>' for k, v in AGREEMENT_COLORS.items()) + '</div>'
               '<div>Reviews: current code-review ACKs, then (+stale ACKs) and <b style="color:#b00020">-NACKs</b>; greener = more ACKs.</div>'
-              '<div>Size: added/deleted lines, tests in parentheses; greener = smaller.</div></div>')
+              '<div>Size: lines added or modified outside tests, then in tests; greener = smaller.</div></div>')
     nav = '<nav class="top"><a href="index.html">Home</a></nav>'
     repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     pages = []
