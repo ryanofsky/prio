@@ -121,9 +121,12 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | N
             print(f"  {cat.name}: {len(items)} PRs, ~{t} input tokens", file=sys.stderr)
             summary[cat.name] = {"prs": len(items), "input_tokens": t}
             continue
-        msg = client.messages.create(model=model, max_tokens=48000, system=system,
-                                     messages=[{"role": "user", "content": user}],
-                                     output_config={"effort": effort, "format": {"type": "json_schema", "schema": SCHEMA}})
+        # Streaming: the SDK refuses non-streaming requests that may run past
+        # ten minutes, which a 48k-token cap over a large category can.
+        with client.messages.stream(model=model, max_tokens=48000, system=system,
+                                    messages=[{"role": "user", "content": user}],
+                                    output_config={"effort": effort, "format": {"type": "json_schema", "schema": SCHEMA}}) as stream:
+            msg = stream.get_final_message()
         text = next((b.text for b in msg.content if b.type == "text"), "")
         parsed = json.loads(text) if msg.stop_reason != "refusal" else None
         cost = cost_usd(model, msg.usage, False) or 0
