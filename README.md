@@ -1,44 +1,54 @@
 # prio
 
-A category-scoped review-priority map for GitHub pull requests. Open PRs
-are sorted into categories (for Bitcoin Core: validation, p2p, wallet,
-ipc, ...) and ranked within each category by how important the problem
-they address is, so that scarce review time goes to consequential work
-rather than to whatever is most active. A model does the categorizing and
-ranking against version-controlled definitions; every judgment is labeled
-as model output with its rationale and inputs exposed.
+Lists a project's open pull requests by category, ranked within each
+category by how much the problem they address matters, so that a PR
+that is a priority within its area is not overlooked because it is
+quiet, large, or old. "prio" is short for priority: priority within a
+category, never across categories. There is deliberately no global
+list; the only entry point is a category.
 
-There is deliberately no global list. The only entry point is a category.
+A language model does the categorizing and ranking against written
+category definitions and shared definitions of importance, review state,
+and agreement. Every judgment on the site is labeled as model output
+and shown with its reasoning and inputs one click away. It is an
+unofficial tool and does not speak for the project it covers.
 
 This repository is the engine: code, prompts, shared definitions, site
-templates, deployment modules. What the site *contains* for a given
+rendering, and deployment modules. What the site *contains* for a given
 project lives in a separate config repo, e.g.
 [prio-bitcoin](https://github.com/ryanofsky/prio-bitcoin) for Bitcoin
-Core. Discussion about how the site works belongs here; discussion about
-categories and rankings belongs there.
+Core, which is served at https://prio.ofsky.org. Discussion about how the
+site works belongs here; discussion about categories and rankings
+belongs in the config repo.
 
 ## Data source
 
 A [github-metadata-backup](https://github.com/0xB10C/github-metadata-backup)
-directory: one JSON file per issue and PR with the full timeline. The
+directory: one JSON file per issue and PR with the full timeline. For
+diffs, a local clone of the project fetches each open PR's head. The
 engine never calls the GitHub API for PR content.
 
 ## Pipeline
 
-| Stage | Command | Model? | Output |
-|-------|---------|--------|--------|
-| extract | `prio extract` | no | `prs/<n>.json`, `index.json`: metadata, ACK table, staleness signals, stack edges, linked issues, discussion text |
-| dossier | (not yet) | yes, per PR when its input changes | summary, discussion state, reviewability, agreement, per-category factor scores |
-| display | `prio display` | yes, per dossier, small | short table lines (goal, why, review state, agreement) |
+| Stage | Command | Model call? | Output |
+|-------|---------|-------------|--------|
+| git | `prio git` | no | per-PR changed files, per-commit stats, a budgeted patch |
+| extract | `prio extract` | no | `prs/<n>.json`, `index.json`: metadata, ACK table, staleness signals, stack edges, linked issues, discussion text, an input hash |
+| dossier | `prio dossier` | yes, per PR when its input hash changes | summary, discussion state, reviewability, agreement, per-category band and score |
+| display | `prio display` | yes, per dossier, small | the short lines the table shows |
 | rank | `prio rank` | yes, per category, on demand or weekly | bands checked against each other, order, review-chain notes |
-| merge | (not yet) | no | site data |
-| render | (not yet) | no | static HTML |
+| render | `prio render` | no | static site: category pages, per-PR pages, ranking notes, raw JSON |
 
-Requires Python 3.11+. The extract stage has no dependencies beyond the
-standard library; the model stages need the `anthropic` package.
-`nix-shell` in this directory provides both and defines a `prio` command
-(see `shell.nix`). Set `PRIO_CONFIG` to a config repo checkout to omit
-`--config`.
+Model stages go through the Batch API by default (half price, results
+within hours) and store every result with its model, token usage, and a
+cost estimate. `nix/prio-pipeline.nix` runs the whole thing on a
+schedule as a NixOS service.
+
+Requires Python 3.11+. The extract and render stages have no
+dependencies beyond the standard library; the model stages need the
+`anthropic` package. `nix-shell` in this directory provides both and
+defines a `prio` command (see `shell.nix`). Set `PRIO_CONFIG` to a config
+repo checkout to omit `--config`.
 
 ## Usage
 
@@ -135,18 +145,25 @@ reasons, dependencies, uncertainties, card).
 
 ```
 prio/            Python package
-  extract.py     stage 1
+  extract.py     stage: backup JSON -> compact facts
+  gitdata.py     sidecar: PR heads, file lists, patches from a local clone
+  dossier.py     stage: per-PR assessment (Batch API)
+  display.py     stage: short table lines from a dossier
+  rank.py        stage: per-category listwise pass
+  render.py      stage: static site
   acks.py        ACK/NACK vocabulary parser (cross-check for adapters)
   adapters/      parsers for project bots (drahtbot)
+  categories.py  category files and pre-filter hints
   config.py      project.toml loader
+  prices.py      list prices for cost estimates
 definitions/     shared definitions used in every prompt and shown on the site
   priority.md    what makes a PR important
   bands.md       P1–P4
   reviewability.md
   agreement.md
-prompts/         prompt templates (stage 2 and 3)
-nix/             NixOS modules for running the pipeline and serving the site
-site/            templates and CSS
+prompts/         prompt text for the dossier, display, and rank stages
+nix/             NixOS module: services.prio (daily pipeline, weekly ranking)
+scripts/         refs-index.sh (resolves cited PR/issue numbers from a full backup)
 ```
 
 ## Config repo schema
