@@ -36,10 +36,12 @@ Rules:
   behavior, interfaces, data, or the code someone maintaining that area
   would review. A mechanical edit that only follows from a change
   elsewhere (a call site updated for a new signature, a test harness
-  adjusted to keep compiling) does not make the PR a member. When in
-  doubt, leave the category out: most PRs belong to one or two
-  categories, and a membership that a reviewer of that area would not
-  thank you for is noise.
+  adjusted to keep compiling) does not make the PR a member, and neither
+  does a release note, a doc line, or a test edit that merely follows
+  from the main change (those do not make a PR a docs, tests, or tools
+  member). When in doubt, leave the category out: most PRs belong to one
+  or two categories, and a membership that a reviewer of that area would
+  not thank you for is noise.
 - Every priority band comes with a factor breakdown and a rationale that
   cites concrete evidence: quote or closely paraphrase a sentence from the
   description, a commit message, a linked issue, or a comment, with who
@@ -51,8 +53,19 @@ Rules:
   review, or say nothing is known. Draft status alone never makes a PR
   Paused. A reviewer comment that the author already addressed in a later
   push is resolved.
-- For Agreement, weigh substance over counts. One reviewer with a real
-  rationale and no objectors is Strong. Objections the author addressed
+- For Agreement, first list every objection in the thread: who raised
+  it, what harm it names, whether the author replied, and whether a fix
+  was actually pushed. Then set the state from the hardest objection
+  that is still open, not from the friendliest reviewer. Rules that
+  models get wrong: an author agreeing in principle without pushing the
+  change leaves the objection open; the absence of the word NACK does
+  not make an objection nonblocking when its substance is a rejection
+  ("this cannot be merged" from a maintainer is blocking, whatever the
+  verdict word); an objection from one reviewer is not answered by
+  another reviewer's approval; check dates before calling an objection
+  answered. Approvals with no rationale from accounts with no history in
+  the project are not support. One reviewer with a real rationale and
+  no open objection is Strong. Objections the author addressed in a push
   and the objector did not follow up on are resolved. Style and naming
   disagreements are not disagreements about the change.
 - The `card` is what a later ranking pass sees instead of the whole PR:
