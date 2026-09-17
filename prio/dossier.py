@@ -333,7 +333,17 @@ def dossier_stem(d: dict) -> str:
 
 
 def have_dossier(out_dir: Path, n: int, h: str, model: str) -> bool:
-    return (out_dir / str(n) / f"{stem_for(h, model)}.json").exists()
+    """True only for a stored dossier with a usable result; a stored failure
+    (request error, unparseable JSON) counts as missing so the next run
+    retries it."""
+    p = out_dir / str(n) / f"{stem_for(h, model)}.json"
+    if not p.exists():
+        return False
+    try:
+        with open(p) as f:
+            return json.load(f).get("result") is not None
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
 def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:

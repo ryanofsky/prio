@@ -78,8 +78,16 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
     recs = load_extract(extract_dir, only)
     def dstem(d):  # display output is keyed by the dossier it rewrites plus the display model
         return f"{dossier_stem(d)}-{model_slug(model)}"
-    todo = {n: d for n, d in dossiers.items() if n in recs and d.get("result")
-            and (force or not (out_dir / str(n) / f"{dstem(d)}.json").exists())}
+    def have(d):
+        p = out_dir / str(n_) / f"{dstem(d)}.json"
+        try:
+            return p.exists() and json.load(open(p)).get("result") is not None
+        except (OSError, json.JSONDecodeError):
+            return False
+    todo = {}
+    for n_, d in dossiers.items():
+        if n_ in recs and d.get("result") and (force or not have(d)):
+            todo[n_] = d
     print(f"{len(dossiers)} dossiers, {len(todo)} need display lines", file=sys.stderr)
     if not todo:
         return {"submitted": 0}
