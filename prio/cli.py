@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--out", required=True, type=Path, help="output dir (writes prs/<n>.json and index.json)")
     ex.add_argument("--only", help="comma-separated PR numbers to extract")
     ex.add_argument("--include-closed", action="store_true")
+    ex.add_argument("--refs-index", type=Path, help="TSV (number, type, state, merged_at, title) covering all PRs/issues, to resolve references")
 
     do = sub.add_parser("dossier", help="stage 2: per-PR model assessment")
     dsub = do.add_subparsers(dest="dcmd", required=True)
@@ -59,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import extract
 
         only = {int(x) for x in args.only.split(",")} if args.only else None
-        res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed)
+        res = extract.run(cfg, args.backup, args.out, only=only, include_closed=args.include_closed, refs_index=args.refs_index)
     elif args.cmd == "dossier" and args.dcmd == "submit":
         from . import dossier
 

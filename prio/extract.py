@@ -82,14 +82,45 @@ def _is_bot(login: str | None, user: dict | None, cfg: Config) -> bool:
     return (user or {}).get("type") == "Bot"
 
 
+def load_refs_index(path: Path) -> dict[int, dict]:
+    """Read a number -> {type, state, merged, title} index (TSV: number, type,
+    state, merged_at, title). Built from a full backup so references to PRs
+    and issues outside the current sample still resolve."""
+    out: dict[int, dict] = {}
+    with open(path) as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t", 4)
+            if len(parts) < 5 or not parts[0].isdigit():
+                continue
+            merged = parts[3].strip().strip(",").strip('"')
+            out[int(parts[0])] = {
+                "type": parts[1], "state": parts[2],
+                "merged": bool(merged and merged != "null"),
+                "merged_at": merged[:10] if merged and merged != "null" else None,
+                "title": parts[4],
+            }
+    return out
+
+
 class Extractor:
-    def __init__(self, cfg: Config, backup_dir: Path):
+    def __init__(self, cfg: Config, backup_dir: Path, refs_index: dict[int, dict] | None = None):
         self.cfg = cfg
         self.backup = backup_dir
         self.pulls = backup_dir / "pulls"
         self.issues = backup_dir / "issues"
         self.adapters = [load_adapter(n) for n in cfg.adapters]
         self._issue_titles: dict[int, str] = {}
+        self.refs_index = refs_index or {}
+
+    def describe_ref(self, n: int) -> dict:
+        """Best available description of a referenced number."""
+        r = self.refs_index.get(n)
+        if r:
+            return {"number": n, **r}
+        if self.is_pr(n):
+            return {"number": n, "type": "pull", "state": None, "merged": None, "merged_at": None, "title": None}
+        return {"number": n, "type": "issue" if (self.issues / f"{n}.json").exists() else None,
+                "state": None, "merged": None, "merged_at": None, "title": self.issue_title(n)}
 
     # ----- lookups -----
 
@@ -221,7 +252,13 @@ class Extractor:
         refs = sorted({int(n) for n in _REF.findall(all_text) if int(n) != pull["number"]})
         deps = sorted({int(n) for _, n in _DEP.findall(body + "\n" + "\n".join(c["message"] for c in commits))})
         fixes = sorted({int(n) for _, n in _FIX.findall(body + "\n" + "\n".join(c["message"] for c in commits))})
-        linked_issues = [{"number": n, "title": self.issue_title(n)} for n in fixes if not self.is_pr(n)]
+        linked_issues = [self.describe_ref(n) for n in fixes if self.refs_index.get(n, {}).get("type", "issue" if not self.is_pr(n) else "pull") == "issue"]
+        # Resolve every referenced number, most relevant first, capped so a
+        # long thread does not flood the prompt.
+        priority_refs = list(dict.fromkeys(deps + fixes))
+        body_refs = [int(n) for n in _REF.findall(body + "\n" + "\n".join(c["message"] for c in commits)) if int(n) != pull["number"]]
+        ordered = list(dict.fromkeys(priority_refs + body_refs + refs))
+        references = [self.describe_ref(n) for n in ordered[:40]]
 
         lines = (pull.get("additions") or 0) + (pull.get("deletions") or 0)
         text_chars = len(all_text) + len(pull.get("title") or "")
@@ -274,6 +311,7 @@ class Extractor:
                 "depends_on": deps,
                 "fixes": fixes,
                 "linked_issues": linked_issues,
+                "references": references,
                 "conflicts": [c["number"] for c in bot.get("drahtbot", {}).get("conflicts", [])],
             },
             "stack": {"shares_commits_with": [], "based_on": [], "base_for": []},
@@ -359,8 +397,9 @@ def index_row(r: dict) -> dict:
     }
 
 
-def run(cfg: Config, backup_dir: Path, out_dir: Path, only: set[int] | None = None, include_closed: bool = False) -> dict:
-    ex = Extractor(cfg, backup_dir)
+def run(cfg: Config, backup_dir: Path, out_dir: Path, only: set[int] | None = None, include_closed: bool = False,
+        refs_index: Path | None = None) -> dict:
+    ex = Extractor(cfg, backup_dir, load_refs_index(refs_index) if refs_index else None)
     out_prs = out_dir / "prs"
     out_prs.mkdir(parents=True, exist_ok=True)
     records: dict[int, dict] = {}

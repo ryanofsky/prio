@@ -192,6 +192,10 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int) -> str:
         "depends_on_phrases": rec["refs"]["depends_on"],
         "fixes": rec["refs"]["fixes"],
         "linked_issues": rec["refs"]["linked_issues"],
+        "referenced_prs_and_issues": [
+            f"#{r['number']} ({r.get('type') or '?'}, {'merged ' + r['merged_at'] if r.get('merged') else (r.get('state') or '?')}) {r.get('title') or ''}".rstrip()
+            for r in rec["refs"].get("references", [])
+        ],
     }
     hints = {c.name: c.hint_matches(rec) for c in cats}
     hints = {k: {kk: vv for kk, vv in v.items() if vv} for k, v in hints.items()}
