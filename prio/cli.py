@@ -88,11 +88,22 @@ def main(argv: list[str] | None = None) -> int:
     dpt.add_argument("--out", required=True, type=Path)
     dpt.add_argument("--all", action="store_true")
 
+    rk = sub.add_parser("rank", help="stage 3: one listwise call per category for consistent bands and order (on demand)")
+    rk.add_argument("--extract", required=True, type=Path)
+    rk.add_argument("--dossier", required=True, type=Path)
+    rk.add_argument("--display", type=Path)
+    rk.add_argument("--out", required=True, type=Path, help="rank output dir (rank/<category>/<stamp>.json)")
+    rk.add_argument("--category", action="append", help="limit to a category (repeatable)")
+    rk.add_argument("--model", default="claude-opus-5")
+    rk.add_argument("--effort", default="high")
+    rk.add_argument("--dry-run", action="store_true")
+
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
     rd.add_argument("--dossier", required=True, type=Path)
     rd.add_argument("--out", required=True, type=Path)
     rd.add_argument("--display", type=Path, help="dir of sidecar display files <n>.json (used when the dossier has no display object)")
+    rd.add_argument("--rank", type=Path, help="rank stage output dir; when present, rows use its bands and order")
 
     args = ap.parse_args(argv)
     if not args.config:
@@ -139,10 +150,15 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_status(args.out, args.all)
+    elif args.cmd == "rank":
+        from . import rank
+
+        only = set(args.category) if args.category else None
+        res = rank.run(cfg, args.extract, args.dossier, args.display, args.out, only, args.model, args.effort, args.dry_run)
     elif args.cmd == "render":
         from . import render
 
-        res = render.render(cfg, args.extract, args.dossier, args.out, args.display)
+        res = render.render(cfg, args.extract, args.dossier, args.out, args.display, args.rank)
     elif args.cmd == "report":
         from . import report
 

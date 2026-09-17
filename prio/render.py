@@ -244,8 +244,13 @@ def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_hre
                 f'<span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
     pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>'
     tag = cat.get("reason_tag") or ""
-    prio_brief = f'{_e(cat["band"])}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
-    prio_style = f"background:{_shade(cat['score'])};" if cat["band"] != "Unranked" else ""
+    band = cat.get("rank_band") or cat["band"]
+    prio_brief = f'{_e(band)}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
+    prio_style = f"background:{_shade(cat['score'])};" if band != "Unranked" else ""
+    if cat.get("rank_band"):
+        L["why"] = [f'{band} after comparing with the other PRs here (assessed alone as {cat["dossier_band"]}): {cat["rank_note"]}'] + L["why"]
+    elif cat.get("rank_note"):
+        L["why"] = L["why"] + [f'Ranking pass: {cat["rank_note"]}']
     rv = r["reviewability"]
     rv_style = f"background:{REVIEWABILITY_COLORS.get(rv['state'], '#fff')};"
     rw_brief, rw_lines, rw_links, rw_style = _reviews(rec)
@@ -331,7 +336,22 @@ def _page(title: str, body: str, sub: str = "", nav: str = "", h1: str | None = 
             f'{nav}<h1>{h1 if h1 is not None else _e(title)}</h1>' + (f'<div class="sub">{sub}</div>' if sub else "") + f'{body}</main><script>{JS}</script></body></html>')
 
 
-def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None) -> dict:
+def load_rank(rank_dir: Path | None, cat_name: str) -> dict | None:
+    """Latest rank-stage output for a category: {number: {band, position, note}}, plus meta."""
+    if not rank_dir:
+        return None
+    latest = rank_dir / cat_name / "latest"
+    if not latest.exists():
+        return None
+    with open(rank_dir / cat_name / f"{latest.read_text().strip()}.json") as f:
+        payload = json.load(f)
+    res = payload.get("result") or {}
+    return {"by": {e["number"]: e for e in res.get("ranking", [])}, "inconsistencies": res.get("inconsistencies", []),
+            "notes": res.get("notes", ""), "created": payload.get("created"), "model": payload.get("model")}
+
+
+def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None,
+           rank_dir: Path | None = None) -> dict:
     cats = {c.name: c for c in load_categories(cfg.categories_dir)}
     if cfg.repos:
         _REPO_URL["url"] = f"https://github.com/{cfg.repos[0].full_name}"
@@ -358,6 +378,23 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
                 members.setdefault(c["name"], []).append((c["score"], n, c))
     for rows in members.values():
         rows.sort(key=lambda x: -x[0])
+    rank_info: dict[str, dict] = {}
+    for name, rows in members.items():
+        rk = load_rank(rank_dir, name)
+        if not rk:
+            continue
+        rank_info[name] = rk
+        by = rk["by"]
+        for i, (score, n, c) in enumerate(rows):
+            e = by.get(n)
+            if not e:
+                continue
+            if e["band"] != c["band"]:
+                c = dict(c, rank_band=e["band"], dossier_band=c["band"], rank_note=e["note"])
+            else:
+                c = dict(c, rank_note=e["note"])
+            rows[i] = (score, n, c)
+        rows.sort(key=lambda x: (by.get(x[1], {}).get("position", 10**6), -x[0]))
     ranks: dict[int, dict[str, tuple[int, int]]] = {}
     for name, rows in members.items():
         for i, (_, n, _c) in enumerate(rows, 1):
@@ -391,7 +428,13 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
                    'project. Click any cell\'s summary text to expand the row; hover a cell for the same text.'
                    + (f' The category definition lives in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>; '
                       'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
-        body = (head + body_rows + "</tbody></table>" + legend + covers
+        rk = rank_info.get(name)
+        rank_block = ""
+        if rk and (rk["inconsistencies"] or rk["notes"]):
+            rank_block = ('<div class="covers"><h2>Notes from the ranking pass</h2>'
+                          + (f'<p>{_t(rk["notes"])}</p>' if rk["notes"] else "") + _ul(rk["inconsistencies"])
+                          + f'<p class="src">Ranking pass by {_e(rk["model"])} on {_e((rk["created"] or "")[:10])}, comparing all PRs in this category at once.</p></div>')
+        body = (head + body_rows + "</tbody></table>" + legend + covers + rank_block
                 + f'<div class="foot">{callout}<div class="sub" title="{len(rows)} PRs in this category, {len(dossiers)} assessed in total">generated {stamp}</div></div>')
         h1 = f'<a href="{_e(cat_src(name))}">{_e(title)}</a>'
         (out_dir / f"{name}.html").write_text(_page(f"{title}: {cfg.site_title}", body, nav=nav, h1=h1))
