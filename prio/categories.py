@@ -29,10 +29,23 @@ class Category:
     def hint_matches(self, rec: dict) -> dict:
         """Which pre-filter hints match an extract record (for the prompt and for pre-filtering)."""
         labels = [l for l in rec.get("labels", []) if l in self.labels]
-        text = " ".join([rec.get("title") or "", rec.get("body") or ""] + [c.get("message", "") for c in rec.get("commits", [])]).lower()
-        keywords = [k for k in self.keywords if k.lower() in text]
+        title = (rec.get("title") or "").lower()
+        text = " ".join([rec.get("body") or ""] + [c.get("message", "") for c in rec.get("commits", [])]).lower()
+        keywords = [k for k in self.keywords if k.lower() in title or k.lower() in text]
         paths = sorted({p for p in rec.get("review_paths", []) + rec.get("changed_paths", []) if any(p.startswith(h) for h in self.paths)})
         return {"labels": labels, "keywords": keywords, "paths": paths[:20]}
+
+    def candidate_strength(self, rec: dict) -> int:
+        """2 = a maintainer label or a changed path matches (strong); 1 = a keyword in
+        the title or at least two distinct keywords in the text (weak); 0 = nothing.
+        Keyword lists contain common words, so a single hit in a long body means little."""
+        h = self.hint_matches(rec)
+        if h["labels"] or h["paths"]:
+            return 2
+        title = (rec.get("title") or "").lower()
+        if any(k.lower() in title for k in self.keywords) or len(h["keywords"]) >= 2:
+            return 1
+        return 0
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:

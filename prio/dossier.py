@@ -246,7 +246,9 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int, git_dir: Pat
     hints = {k: {kk: vv for kk, vv in v.items() if vv} for k, v in hints.items()}
     # Pre-filter: score only categories with a hint match; all of them when
     # nothing matches (unlabeled PR with no recognizable paths or words).
-    candidates = [c for c in cats if hints.get(c.name)] or list(cats)
+    strength = {c.name: c.candidate_strength(rec) for c in cats}
+    candidates = ([c for c in cats if strength[c.name] == 2] or [c for c in cats if strength[c.name] == 1] or list(cats))
+    hints = {k: v for k, v in hints.items() if k in {c.name for c in candidates}}
 
     commits = "\n\n".join(f"{c['sha'][:10]} {c['message']}" for c in rec["commits"])
     patch, files, patch_truncated = load_patch(git_dir, rec["number"], patch_chars)
