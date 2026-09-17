@@ -138,11 +138,20 @@ def _cell(col: str, brief: str, lines: list[str], style: str = "", extra_html: s
 def load_display(display_dir: Path | None, n: int, d: dict) -> dict | None:
     """Display lines: the dossier's own display object, else a sidecar file."""
     r = d.get("result") or {}
+    if display_dir:
+        latest = display_dir / str(n) / "latest"
+        if latest.exists():  # stage output: display/<n>/<hash>.json
+            with open(display_dir / str(n) / f"{latest.read_text().strip()}.json") as f:
+                payload = json.load(f)
+            if payload.get("result"):
+                out = dict(payload["result"])
+                out["source"] = f"display stage, {payload.get('model')}"
+                return out
+        if (display_dir / f"{n}.json").exists():  # sidecar file (subagent-written)
+            with open(display_dir / f"{n}.json") as f:
+                return json.load(f)
     if r.get("display"):
         return r["display"]
-    if display_dir and (display_dir / f"{n}.json").exists():
-        with open(display_dir / f"{n}.json") as f:
-            return json.load(f)
     return None
 
 

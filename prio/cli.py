@@ -68,6 +68,25 @@ def main(argv: list[str] | None = None) -> int:
     gd.add_argument("--git-config", action="append", default=[], metavar="KEY=VALUE",
                     help="git setting for this run only, e.g. safe.directory=/path/to/mirror (repeatable)")
 
+    dp = sub.add_parser("display", help="stage 2b: rewrite dossiers into short display lines (separate small model call)")
+    dpsub = dp.add_subparsers(dest="pcmd", required=True)
+    dps = dpsub.add_parser("submit")
+    dps.add_argument("--extract", required=True, type=Path)
+    dps.add_argument("--dossier", required=True, type=Path)
+    dps.add_argument("--out", required=True, type=Path, help="display output dir (display/<n>/<dossier-hash>.json)")
+    dps.add_argument("--only")
+    dps.add_argument("--model", default="claude-sonnet-5")
+    dps.add_argument("--dry-run", action="store_true")
+    dps.add_argument("--sync", action="store_true")
+    dps.add_argument("--force", action="store_true")
+    dpc = dpsub.add_parser("collect")
+    dpc.add_argument("--out", required=True, type=Path)
+    dpc.add_argument("--batch")
+    dpc.add_argument("--wait", action="store_true")
+    dpt = dpsub.add_parser("status")
+    dpt.add_argument("--out", required=True, type=Path)
+    dpt.add_argument("--all", action="store_true")
+
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
     rd.add_argument("--dossier", required=True, type=Path)
@@ -106,6 +125,19 @@ def main(argv: list[str] | None = None) -> int:
         only = {int(x) for x in args.only.split(",")} if args.only else None
         res = gitdata.run(args.repo, args.url, args.reference, args.extract, args.out, only, args.branch,
                           args.budget_chars, args.pull_ref, args.branch_ref, args.git_config)
+    elif args.cmd == "display" and args.pcmd == "submit":
+        from . import display
+
+        only = {int(x) for x in args.only.split(",")} if args.only else None
+        res = display.cmd_submit(cfg, args.extract, args.dossier, args.out, only, args.model, args.dry_run, args.sync, args.force)
+    elif args.cmd == "display" and args.pcmd == "collect":
+        from . import dossier
+
+        res = dossier.cmd_collect(args.out, args.batch, args.wait)
+    elif args.cmd == "display" and args.pcmd == "status":
+        from . import dossier
+
+        res = dossier.cmd_status(args.out, args.all)
     elif args.cmd == "render":
         from . import render
 
