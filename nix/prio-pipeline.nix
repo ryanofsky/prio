@@ -21,7 +21,19 @@ let
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     export HOME=${cfg.dataDir}
     D=${cfg.dataDir}
+    mkdir -p "$D/logs" "$D/status"
+    exec > >(tee -a "$D/logs/run-$(date -u +%Y%m%d-%H%M).log") 2>&1
+    : > "$D/status/current.log"
     log() { echo "[$(date -u +%FT%TZ)] $*"; }
+    mark() {
+      echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"
+      if [ -x "$D/venv/bin/python" ]; then
+        PYTHONPATH="$D/src/engine" "$D/venv/bin/python" -m prio.cli --config "$D/src/config" status-page \
+          --data-dir "$D" --site-dir ${lib.escapeShellArg cfg.siteDir} --next-runs ${lib.escapeShellArg cfg.scheduleText} >/dev/null 2>&1 || true
+      fi
+    }
+    trap 'mark "FAILED at line $LINENO"' ERR
+    mark "run started"
 
     # --- code checkouts (pinned by branch; a run is reproducible from the two commits logged below)
     for pair in "engine=${cfg.engineRepo}" "config=${cfg.configRepo}"; do
@@ -39,6 +51,7 @@ let
     export PYTHONPATH="$D/src/engine"
     export ANTHROPIC_API_KEY="$(cat ${cfg.apiKeyFile})"
     prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
+    mark "code and environment ready"
 
     # --- data
     ${lib.optionalString (cfg.projectRepo != null) ''
@@ -50,6 +63,7 @@ let
     ''}
     log "refs index"
     bash "$D/src/engine/scripts/refs-index.sh" ${lib.escapeShellArg cfg.backupDir} > "$D/refs-index.tsv"
+    mark "git sidecar done"
     log "extract"
     prio extract --backup ${lib.escapeShellArg cfg.backupDir} --out "$D/extract" \
       --refs-index "$D/refs-index.tsv" ${lib.optionalString (cfg.projectRepo != null) ''--git "$D/git"''}
@@ -61,20 +75,27 @@ let
       prio extract --backup ${lib.escapeShellArg cfg.backupDir} --out "$D/extract" --refs-index "$D/refs-index.tsv" --git "$D/git"
     ''}
 
+    mark "extract done"
+
     # --- model stages (batch; wait for results)
     log "dossier submit (max cost ${toString cfg.maxCost})"
     prio dossier submit --extract "$D/extract" --out "$D/dossier" ${lib.optionalString (cfg.projectRepo != null) ''--git "$D/git"''} \
       --model ${cfg.model} --effort ${cfg.effort} --patch-chars ${toString cfg.patchChars} --max-cost ${toString cfg.maxCost}
+    mark "dossier batch submitted, waiting"
     prio dossier collect --out "$D/dossier" --wait
+    mark "dossiers collected"
     log "display submit"
     prio display submit --extract "$D/extract" --dossier "$D/dossier" --out "$D/display" --model ${cfg.displayModel}
+    mark "display batch submitted, waiting"
     prio display collect --out "$D/display" --wait
+    mark "display collected"
 
     # --- site (rank output, if any, from the weekly prio-rank service)
     log "render"
     prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
-    rsync -a --delete "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
+    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     log "done"
+    mark "done: site published"
   '';
   rankScript = pkgs.writeShellScript "prio-rank" ''
     set -euo pipefail
@@ -85,18 +106,24 @@ let
     export PYTHONPATH="$D/src/engine"
     export ANTHROPIC_API_KEY="$(cat ${cfg.apiKeyFile})"
     prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
+    mkdir -p "$D/logs" "$D/status"
+    exec > >(tee -a "$D/logs/rank-$(date -u +%Y%m%d-%H%M).log") 2>&1
+    mark() { echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"; prio status-page --data-dir "$D" --site-dir ${lib.escapeShellArg cfg.siteDir} --next-runs ${lib.escapeShellArg cfg.scheduleText} >/dev/null 2>&1 || true; }
+    : > "$D/status/current.log"; mark "ranking pass started"
     echo "[$(date -u +%FT%TZ)] rank (only categories changed since last pass)"
     prio rank --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --out "$D/rank" --model ${cfg.rankModel} --effort ${cfg.rankEffort}
     echo "[$(date -u +%FT%TZ)] render"
     prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
-    rsync -a --delete "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
+    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     echo "[$(date -u +%FT%TZ)] done"
+    mark "done: ranking published"
   '';
 in
 {
   options.services.prio = {
     rankModel = lib.mkOption { type = lib.types.str; default = "claude-opus-5"; };
     rankEffort = lib.mkOption { type = lib.types.str; default = "high"; };
+    scheduleText = lib.mkOption { type = lib.types.str; default = "Daily run at 01:00 UTC; weekly ranking pass on Sundays at 04:00 UTC."; description = "shown on the status page"; };
     rankOnCalendar = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "weekly ranking pass schedule, e.g. \"Sun *-*-* 03:00:00\"; null disables"; };
     enable = lib.mkEnableOption "the prio review-priority pipeline";
     dataDir = lib.mkOption { type = lib.types.str; default = "/var/lib/prio"; };

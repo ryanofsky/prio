@@ -99,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     rk.add_argument("--dry-run", action="store_true")
     rk.add_argument("--force", action="store_true", help="re-rank even if nothing changed since the last ranking")
 
+    st = sub.add_parser("status-page", help="write status.html/status.json into the site dir from pipeline state")
+    st.add_argument("--data-dir", required=True, type=Path)
+    st.add_argument("--site-dir", required=True, type=Path)
+    st.add_argument("--next-runs", default="", help="text describing the schedule")
+    st.add_argument("--no-lookup", action="store_true", help="do not query the API for in-progress batches")
+
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
     rd.add_argument("--dossier", required=True, type=Path)
@@ -151,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import dossier
 
         res = dossier.cmd_status(args.out, args.all)
+    elif args.cmd == "status-page":
+        from . import status
+
+        res = status.render(args.data_dir, args.site_dir, args.next_runs, not args.no_lookup)
     elif args.cmd == "rank":
         from . import rank
 

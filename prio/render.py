@@ -531,6 +531,6 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
             parts.append(f'<a href="{_e(engine_url)}/issues/new">open an issue in {_e(engine_url.replace("https://github.com/", ""))}</a> about the site itself')
         feedback = ('<div class="intro"><p>Feedback of any kind, requests for help, and discussion are welcome: '
                     + ", or ".join(parts) + '.</p></div>')
-    index = intro + catlist + feedback + f'<div class="foot rule"><div class="sub" title="{len(dossiers)} PRs assessed">generated {stamp}</div></div>'
+    index = intro + catlist + feedback + f'<div class="foot rule"><div class="sub" title="{len(dossiers)} PRs assessed">generated {stamp} · <a href="status.html">pipeline status</a></div></div>'
     (out_dir / "index.html").write_text(_page(cfg.site_title, index))
     return {"pages": pages, "prs": len(dossiers), "out": str(out_dir), "display_files": sum(1 for v in displays.values() if v)}
