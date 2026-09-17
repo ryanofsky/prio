@@ -13,15 +13,14 @@ set -euo pipefail
 dir=${1:?usage: refs-index.sh BACKUP_DIR}
 for kind in pull issue; do
   find "$dir/${kind}s" -name '*.json' -print0 | xargs -0 awk -v kind="$kind" '
-    FNR == 1 { n = FILENAME; sub(/.*\//, "", n); sub(/\.json$/, "", n); title = ""; state = ""; flag = ""; merged_at = ""; done = 0 }
-    done { next }
-    /^    "title": /     && title == "" { title = $0; sub(/^    "title": "/, "", title); sub(/",?$/, "", title) }
-    /^    "state": /     && state == "" { state = $0; sub(/^    "state": "/, "", state); sub(/",?$/, "", state) }
-    /^    "merged": /    && flag == ""  { flag = ($0 ~ /true/) ? "yes" : "no" }
-    /^    "merged_at": / && merged_at == "" { merged_at = $0; sub(/^    "merged_at": /, "", merged_at); sub(/,$/, "", merged_at); gsub(/"/, "", merged_at); if (merged_at == "null") merged_at = "" }
-    title != "" && state != "" && (kind == "issue" || (flag == "no") || (flag == "yes" && merged_at != "")) {
-      printf "%s\t%s\t%s\t%s\t%s\n", n, kind, state, (flag == "yes" ? merged_at : ""), title
-      done = 1
+    function emit() {
+      if (n != "" && title != "" && state != "")
+        printf "%s\t%s\t%s\t%s\t%s\n", n, kind, state, merged_at, title
     }
+    FNR == 1 { emit(); n = FILENAME; sub(/.*\//, "", n); sub(/\.json$/, "", n); title = ""; state = ""; merged_at = "" }
+    /^    "title": /     && title == ""     { title = $0; sub(/^    "title": "/, "", title); sub(/",?$/, "", title) }
+    /^    "state": /     && state == ""     { state = $0; sub(/^    "state": "/, "", state); sub(/",?$/, "", state) }
+    /^    "merged_at": / && merged_at == "" { merged_at = $0; sub(/^    "merged_at": /, "", merged_at); sub(/,$/, "", merged_at); gsub(/"/, "", merged_at); if (merged_at == "null") merged_at = "" }
+    END { emit() }
   '
 done
