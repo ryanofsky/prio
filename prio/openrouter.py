@@ -66,15 +66,23 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
         "HTTP-Referer": "https://github.com/ryanofsky/prio", "X-Title": "prio",
     })
     last = None
+    retries = max(retries, 8)
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=600) as resp:
                 out = json.load(resp)
             break
         except urllib.error.HTTPError as e:
-            last = f"HTTP {e.code}: {e.read()[:300].decode(errors='replace')}"
+            body_text = e.read()[:300].decode(errors="replace")
+            last = f"HTTP {e.code}: {body_text}"
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:
-                time.sleep(5 * (attempt + 1))
+                # Rate limits (new OpenRouter accounts: 20 requests/min per model)
+                # need real backoff; honor Retry-After when given.
+                wait = 20 * (attempt + 1) if e.code == 429 else 5 * (attempt + 1)
+                ra = e.headers.get("Retry-After") if e.headers else None
+                if ra and ra.isdigit():
+                    wait = max(wait, int(ra))
+                time.sleep(min(wait, 120))
                 continue
             raise RuntimeError(last)
         except (urllib.error.URLError, TimeoutError) as e:
