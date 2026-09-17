@@ -85,9 +85,40 @@ SCHEMA = {
         },
         "agreement": {
             "type": "object", "additionalProperties": False,
-            "required": ["state", "summary", "reason", "evidence"],
+            "required": ["objections", "support", "state", "summary", "reason", "evidence"],
             "properties": {
-                "state": {"type": "string", "enum": AGREEMENT_STATES},
+                "objections": {
+                    "type": "array",
+                    "description": "Every objection in the thread, one entry each, filled in before choosing the state. Include concerns phrased tentatively ('may violate', 'I'm uncomfortable with', 'not sure this is safe') when they name a real cost of merging: a doubt about a security or correctness assumption from an experienced reviewer is an objection with a harm. Empty only if nobody raised a cost.",
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["reviewer", "harm", "blocking", "author_replied", "fix_pushed", "status", "evidence"],
+                        "properties": {
+                            "reviewer": {"type": "string", "description": "GitHub login"},
+                            "harm": {"type": "string", "description": "the concrete cost of merging that the reviewer names; empty if it is only 'not useful' or style"},
+                            "blocking": {"type": "boolean", "description": "true if the reviewer treats it as a reason not to merge (a NACK word is not required; 'cannot be merged' from a maintainer is blocking)"},
+                            "author_replied": {"type": "boolean"},
+                            "fix_pushed": {"type": "boolean", "description": "true only if a later push actually implements the change; agreeing in principle is false"},
+                            "status": {"type": "string", "enum": ["open", "resolved", "agreed_to_disagree"],
+                                       "description": "resolved = fix pushed, or author rejected with rationale and the reviewer did not push back; agreed_to_disagree = both accept the PR can proceed; otherwise open"},
+                            "evidence": {"type": "string", "description": "date and a short quote"},
+                        },
+                    },
+                },
+                "support": {
+                    "type": "array",
+                    "description": "Reviewers who spoke for the PR. Approvals with no rationale from accounts with no project history are omitted.",
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["reviewer", "reason", "substantive"],
+                        "properties": {
+                            "reviewer": {"type": "string"},
+                            "reason": {"type": "string", "description": "why they want it, in their words; empty if none given"},
+                            "substantive": {"type": "boolean", "description": "true if a specific reason is given"},
+                        },
+                    },
+                },
+                "state": {"type": "string", "enum": AGREEMENT_STATES, "description": "your own read; the pipeline also derives a state from the lists above and records both"},
                 "summary": {"type": "string", "description": "One line for the table cell detail, e.g. 'Positive, but ajtowns thinks the option name is a footgun; author disagrees'"},
                 "reason": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}, "description": "who said what, briefly"},
@@ -356,6 +387,32 @@ def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:
     return p
 
 
+def derive_agreement(ag: dict) -> tuple[str, str]:
+    """Agreement state from the enumerated objections and support, per
+    definitions/agreement.md. Returns (state, one-line derivation)."""
+    obj = ag.get("objections") or []
+    sup = ag.get("support") or []
+    open_blocking = [o for o in obj if o.get("status") == "open" and o.get("blocking") and o.get("harm")]
+    open_nonblocking = [o for o in obj if o.get("status") == "open" and not o.get("blocking") and o.get("harm")]
+    if open_blocking:
+        unanswered = [o for o in open_blocking if not o.get("author_replied")]
+        if unanswered:
+            return "Blocked", f"blocking objection open with no author reply ({', '.join(o['reviewer'] for o in unanswered)})"
+        return "Disputed", f"blocking objection open, author engaging ({', '.join(o['reviewer'] for o in open_blocking)})"
+    if open_nonblocking:
+        return "Mild", f"nonblocking objection open ({', '.join(o['reviewer'] for o in open_nonblocking)})"
+    caveats = [o for o in obj if o.get("status") == "agreed_to_disagree"]
+    if sup:
+        if caveats:
+            return "Positive w/ caveats", f"support with an agreed-to-disagree objection ({', '.join(o['reviewer'] for o in caveats)})"
+        if any(x.get("substantive") for x in sup):
+            return "Strong", f"substantive support, no open objection ({', '.join(x['reviewer'] for x in sup if x.get('substantive'))})"
+        return "Positive", f"support without stated reasons, no open objection ({', '.join(x['reviewer'] for x in sup)})"
+    if obj:
+        return "Neutral", "objections resolved, nobody has spoken for the PR"
+    return "Crickets", "no substantive comment either way"
+
+
 def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | None = None) -> dict:
     text = next((b.text for b in msg.content if b.type == "text"), "")
     parsed = None
@@ -367,6 +424,12 @@ def _result_payload(n: int, h: str, model: str, batch: bool, msg, extra: dict | 
             parsed = json.loads(text)
         except json.JSONDecodeError as e:
             err = f"json: {e}"
+    if parsed and isinstance(parsed.get("agreement"), dict) and "objections" in parsed["agreement"]:
+        ag = parsed["agreement"]
+        derived, why = derive_agreement(ag)
+        ag["model_state"] = ag.get("state")
+        ag["derivation"] = why
+        ag["state"] = derived
     cost = getattr(msg.usage, "cost", None)
     if cost is None:
         cost = cost_usd(model, msg.usage, batch)

@@ -53,10 +53,16 @@ Rules:
   review, or say nothing is known. Draft status alone never makes a PR
   Paused. A reviewer comment that the author already addressed in a later
   push is resolved.
-- For Agreement, first list every objection in the thread: who raised
-  it, what harm it names, whether the author replied, and whether a fix
-  was actually pushed. Then set the state from the hardest objection
-  that is still open, not from the friendliest reviewer. Rules that
+- For Agreement, fill the `objections` list first: one entry per
+  objection in the thread with who raised it, the concrete harm it
+  names, whether the reviewer treats it as blocking, whether the author
+  replied, whether a fix was actually pushed, and its status. Then the
+  `support` list: who spoke for the PR and why. The pipeline derives the
+  Agreement state from these lists (an open blocking objection with no
+  author reply is Blocked; open and answered is Disputed; an open
+  nonblocking one is Mild; otherwise support decides Strong, Positive, or
+  Positive w/ caveats), so their accuracy is what matters; your own
+  `state` is recorded next to the derived one. Rules that
   models get wrong: an author agreeing in principle without pushing the
   change leaves the objection open; the absence of the word NACK does
   not make an objection nonblocking when its substance is a rejection
