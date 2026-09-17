@@ -59,6 +59,8 @@ th { background: #f0f0f0; position: sticky; top: 0; }
 td .brief { display: block; }
 td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; }
 tr.open td .detail { display: block; }
+tr.open td { border-top: 2px solid #444; border-bottom: 2px solid #444; }
+tr.open td:first-child { border-left: 2px solid #444; } tr.open td:last-child { border-right: 2px solid #444; }
 td .brief { cursor: pointer; }
 td.pr .title { overflow-wrap: anywhere; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
 td.prio { white-space: nowrap; } td.prio .brief { font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
