@@ -145,7 +145,8 @@ def build_system(cfg: Config, cats: list[Category]) -> list[dict]:
         "# Output\n\nReturn one JSON object matching the provided schema. "
         "Factors are 0-3 (0 none, 1 minor, 2 clear, 3 major): security_stability, bug_severity, "
         "performance, user_value (feature solving a user pain point), leverage (unblocks other important work). "
-        "Include every category listed in the user turn, with member=false and band=Unranked where it does not apply."
+        "Include every category listed in the user turn, with member=false and band=Unranked where it does not apply; "
+        "omit categories not listed unless the PR clearly belongs to one."
     )
     text = "\n\n---\n\n".join(parts)
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
@@ -243,6 +244,9 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int, git_dir: Pat
     }
     hints = {c.name: c.hint_matches(rec) for c in cats}
     hints = {k: {kk: vv for kk, vv in v.items() if vv} for k, v in hints.items()}
+    # Pre-filter: score only categories with a hint match; all of them when
+    # nothing matches (unlabeled PR with no recognizable paths or words).
+    candidates = [c for c in cats if hints.get(c.name)] or list(cats)
 
     commits = "\n\n".join(f"{c['sha'][:10]} {c['message']}" for c in rec["commits"])
     patch, files, patch_truncated = load_patch(git_dir, rec["number"], patch_chars)
@@ -274,7 +278,9 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int, git_dir: Pat
         f"<files>\n{file_list}\n</files>\n\n"
         f"{patch_block}"
         f"<discussion>\n{discussion}\n</discussion>\n\n"
-        f"Categories to assess: {', '.join(c.name for c in cats)}."
+        f"Categories to assess: {', '.join(c.name for c in candidates)}. "
+        + ("(Other categories were excluded by a label, path, and keyword pre-filter; if the PR clearly belongs to one of them, "
+           "include it with member=true anyway.)" if len(candidates) < len(cats) else "")
     )
 
 
