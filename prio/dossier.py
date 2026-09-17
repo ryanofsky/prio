@@ -470,10 +470,18 @@ def check_agreement(ag: dict, thread: dict | None) -> list[str]:
     for o in ag.get("objections") or []:
         assoc = commenters.get(o.get("reviewer") or "", {}).get("assoc", "NONE")
         kind = o.get("kind")
-        if o.get("status") in ("resolved", "agreed_to_disagree") and not (o.get("resolution_evidence") or "").strip():
-            o["status_model"] = o["status"]
-            o["status"] = "open"
-            notes.append(f"{o.get('reviewer')}: {o['status_model']} without evidence, treated as open")
+        if o.get("status") in ("resolved", "agreed_to_disagree"):
+            res = (o.get("resolution_evidence") or "").strip()
+            od = _DATE.search(o.get("evidence") or "")
+            rd = _DATE.search(res)
+            if not res:
+                o["status_model"] = o["status"]
+                o["status"] = "open"
+                notes.append(f"{o.get('reviewer')}: {o['status_model']} without evidence, treated as open")
+            elif od and rd and rd.group(1) < od.group(1):
+                o["status_model"] = o["status"]
+                o["status"] = "open"
+                notes.append(f"{o.get('reviewer')}: resolution evidence ({rd.group(1)}) predates the objection ({od.group(1)}), treated as open")
         if not o.get("blocking") and o.get("status") == "open" and o.get("harm"):
             if kind in BLOCKING_KINDS_ANYONE or (kind in BLOCKING_KINDS_MEMBER and assoc in MEMBER_ASSOC):
                 o["blocking"] = True
