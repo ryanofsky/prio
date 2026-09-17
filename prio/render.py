@@ -82,6 +82,7 @@ ul.catlist { line-height: 1.7; padding-left: 1.2rem; } ul.catlist .editor { colo
 .foot .sub { margin: 1rem 0 0; }
 .foot.rule { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: .6rem; } .foot.rule .sub { margin: 0; }
 .legend div { margin: .15rem 0; }
+.rankline { font-size: .8rem; color: var(--muted); background: #fff; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0; }
 .covers { font-size: .9rem; background: #fff; border: 1px solid var(--border); padding: .4rem .5rem .6rem; margin: 1rem 0 0; }
 .covers h2 { font-size: 1rem; margin: .8rem 0 .2rem; } .covers p { margin: .3rem 0; } .covers ul { margin: .2rem 0; }
 .covers .src { font-size: .8rem; color: var(--muted); margin: .1rem 0 .2rem; }
@@ -496,9 +497,9 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
             (out_dir / "rank" / f"{name}.html").write_text(_page(f"{title}: ranking notes", notes_html,
                                                                nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
             n_notes = len(rk["inconsistencies"]) + len(changes)
-            rank_line = (f'<div>Ranking pass ({_e((rk["created"] or "")[:10])}): all PRs here were compared with each other; '
+            rank_line = (f'<div class="rankline">Ranking pass ({_e((rk["created"] or "")[:10])}): all PRs here were compared with each other; '
                          f'<a href="rank/{_e(name)}.html">{n_notes} notes on review order, overlaps, and band changes</a>.</div>')
-        legend_here = legend.replace("</div></div>", f"</div>{rank_line}</div>") if rank_line else legend
+        legend_here = legend + rank_line
         body = (head + body_rows + "</tbody></table>" + legend_here + covers
                 + f'<div class="foot">{callout}<div class="sub" title="{len(rows)} PRs in this category, {len(dossiers)} assessed in total">generated {stamp}</div></div>')
         h1 = f'<a href="{_e(cat_src(name))}">{_e(title)}</a>'
