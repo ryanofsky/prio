@@ -397,8 +397,30 @@ def index_row(r: dict) -> dict:
     }
 
 
+def merge_git(rec: dict, git_dir: Path | None) -> None:
+    """Attach sidecar git facts (see gitdata.py): changed paths with stats,
+    test-line count, and whether the sidecar saw the same head as the backup."""
+    rec["changed_paths"] = []
+    rec["files"] = []
+    rec["test_lines"] = None
+    rec["git"] = None
+    if not git_dir:
+        return
+    p = git_dir / f"{rec['number']}.json"
+    if not p.exists():
+        return
+    with open(p) as f:
+        g = json.load(f)
+    rec["files"] = g["files"]
+    rec["changed_paths"] = [x["path"] for x in g["files"]]
+    rec["test_lines"] = g["test_lines"]
+    rec["git"] = {"head": g["head"], "head_matches_backup": g["head_matches_backup"], "base": g["base"],
+                  "commits": [{"sha": c["sha"][:10], "subject": c["subject"], "files": len(c["files"]), "add": c["add"], "del": c["del"]} for c in g["commits"]],
+                  "patch_truncated": g["patch_truncated"]}
+
+
 def run(cfg: Config, backup_dir: Path, out_dir: Path, only: set[int] | None = None, include_closed: bool = False,
-        refs_index: Path | None = None) -> dict:
+        refs_index: Path | None = None, git_dir: Path | None = None) -> dict:
     ex = Extractor(cfg, backup_dir, load_refs_index(refs_index) if refs_index else None)
     out_prs = out_dir / "prs"
     out_prs.mkdir(parents=True, exist_ok=True)
@@ -418,6 +440,7 @@ def run(cfg: Config, backup_dir: Path, out_dir: Path, only: set[int] | None = No
     stamp = _now().isoformat(timespec="seconds")
     rows = []
     for n, r in records.items():
+        merge_git(r, git_dir)
         r["input_hash"] = input_hash(r)
         r["extracted_at"] = stamp
         with open(out_prs / f"{n}.json", "w") as f:
