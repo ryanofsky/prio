@@ -350,9 +350,18 @@ def _client():
     return anthropic.Anthropic()
 
 
+def estimate_cost(client, model: str, system: list[dict], users: list[str], sync: bool, out_per: int = 1500) -> float:
+    """Rough cost from token counts: cached system once, every user turn, a guess at output."""
+    from .prices import PRICES
+    inp, out = PRICES[model]
+    sys_t = client.messages.count_tokens(model=model, system=system, messages=[{"role": "user", "content": "x"}]).input_tokens
+    tot = sum(client.messages.count_tokens(model=model, messages=[{"role": "user", "content": u}]).input_tokens for u in users)
+    return ((sys_t * 1.25 + tot) * inp + out_per * len(users) * out) / 1e6 * (1.0 if sync else 0.5)
+
+
 def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | None, model: str,
                effort: str, budget_tokens: int, max_tokens: int, dry_run: bool, sync: bool, force: bool,
-               git_dir: Path | None = None, patch_chars: int = 80000) -> dict:
+               git_dir: Path | None = None, patch_chars: int = 80000, max_cost: float | None = None) -> dict:
     cats = load_categories(cfg.categories_dir)
     system = build_system(cfg, cats)
     recs = load_extract(extract_dir, only)
@@ -383,6 +392,12 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         return {"dry_run": True, "count": len(todo)}
 
     client = _client()
+    if max_cost is not None:
+        est = estimate_cost(client, model, system, [build_user(r, cats, budget_tokens, git_dir, patch_chars) for r in todo.values()], sync)
+        if est > max_cost:
+            print(f"estimated ${est:.2f} exceeds --max-cost {max_cost:.2f}; not submitting {len(todo)} PRs", file=sys.stderr)
+            return {"skipped": len(todo), "estimated_cost": round(est, 2), "max_cost": max_cost}
+        print(f"estimated ${est:.2f} within --max-cost {max_cost:.2f}", file=sys.stderr)
     if sync:
         total = 0.0
         for n, r in todo.items():

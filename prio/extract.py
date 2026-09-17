@@ -363,9 +363,16 @@ def input_hash(rec: dict) -> str:
     Excludes the day-relative fields (ages and day counts) so a quiet PR does
     not look changed every morning.
     """
-    skip = {"age_days", "input_hash", "extracted_at"}
+    skip = {"age_days", "input_hash", "extracted_at", "labels_log"}
     d = {k: v for k, v in rec.items() if k not in skip}
     d["signals"] = {k: v for k, v in rec["signals"].items() if not k.endswith("_days")}
+    # Volatile bot-maintained facts churn daily without changing what a
+    # reader would conclude; the site shows them straight from the extract.
+    d["labels"] = [l for l in rec["labels"] if l not in ("Needs rebase", "CI failed")]
+    d["signals"] = {k: v for k, v in d["signals"].items() if k not in ("needs_rebase", "ci_failed", "mergeable_state")}
+    d["mergeable_state"] = None
+    d["refs"] = {k: v for k, v in rec["refs"].items() if k != "conflicts"}
+    d["bot"] = {name: {k: v for k, v in b.items() if k != "conflicts"} for name, b in rec["bot"].items()}
     return hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 

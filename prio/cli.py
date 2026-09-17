@@ -37,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     ds.add_argument("--max-tokens", type=int, default=16000)
     ds.add_argument("--git", type=Path, help="git sidecar output dir; includes the patch in the prompt")
     ds.add_argument("--patch-chars", type=int, default=80000, help="max patch characters per request (smallest files first)")
+    ds.add_argument("--max-cost", type=float, help="estimate first and refuse to submit if the estimate (USD) exceeds this")
     ds.add_argument("--dry-run", action="store_true", help="count tokens, estimate cost, print one prompt; no model calls")
     ds.add_argument("--sync", action="store_true", help="call the API directly instead of the Batch API")
     ds.add_argument("--force", action="store_true", help="re-assess even if a dossier for this input hash exists")
@@ -110,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         only = {int(x) for x in args.only.split(",")} if args.only else None
         res = dossier.cmd_submit(cfg, args.extract, args.out, only, args.model, args.effort,
                                  args.budget_tokens, args.max_tokens, args.dry_run, args.sync, args.force,
-                                 args.git, args.patch_chars)
+                                 args.git, args.patch_chars, args.max_cost)
     elif args.cmd == "dossier" and args.dcmd == "collect":
         from . import dossier
 
