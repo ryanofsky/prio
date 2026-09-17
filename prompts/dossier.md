@@ -63,6 +63,13 @@ Rules:
   and each category's `reason_tag` is one or two words for why the band
   applies. Full reasoning goes in the `reason` and `rationale` fields,
   which readers see on expand.
+- The `display` object is what the table shows. Write it last, after
+  the analysis, as short plain lines a reader can skim in a second each:
+  `goal` says what the PR achieves and for whom, not how; each category's
+  `why` says how much the benefit matters and what it unblocks, and never
+  mentions agreement, review state, or code quality; `reviewability`
+  says whether reviewing now is worthwhile; `agreement` lists who said
+  what and whether it is resolved. No semicolons, no nested clauses.
 - Write every `reason`, `rationale`, and `summary` so that its first
   sentence stands alone as the short version: the table shows only the
   first one or two sentences, and the rest appears on a detail page.

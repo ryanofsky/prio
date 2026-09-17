@@ -37,8 +37,29 @@ SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["summary", "problem", "discussion", "reviewability", "agreement", "dependencies",
-                 "categories", "confidence", "uncertainties", "card"],
+                 "categories", "confidence", "uncertainties", "card", "display"],
     "properties": {
+        "display": {
+            "type": "object", "additionalProperties": False,
+            "description": "Short, skimmable text written for table cells. Each item is one line, plain words, no semicolons, no implementation detail.",
+            "required": ["goal", "reviewability", "agreement", "categories"],
+            "properties": {
+                "goal": {"type": "array", "items": {"type": "string"}, "description": "1-3 lines: what the PR is trying to achieve and the benefit or problem solved, as a user or maintainer would state it. Not how it is implemented."},
+                "reviewability": {"type": "array", "items": {"type": "string"}, "description": "1-2 lines: is the code in a state worth reviewing now, and what if anything would invalidate a review. Open design questions are an invitation to review, not a reason to wait, unless a direction was decided and the change is pending."},
+                "agreement": {"type": "array", "items": {"type": "string"}, "description": "1-4 lines: who supports or objects, what they said in a few words, and whether it is resolved."},
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["name", "why"],
+                        "properties": {
+                            "name": {"type": "string"},
+                            "why": {"type": "array", "items": {"type": "string"}, "description": "2-3 lines on why this PR is or is not worth review time in this category: the size of the benefit, who feels it, what it unblocks. Nothing about agreement, review state, or code quality."},
+                        },
+                    },
+                },
+            },
+        },
         "summary": {"type": "string", "description": "What the PR changes, 2-4 sentences."},
         "problem": {"type": "string", "description": "The problem it addresses and who feels it, 1-3 sentences."},
         "discussion": {

@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     rd.add_argument("--extract", required=True, type=Path)
     rd.add_argument("--dossier", required=True, type=Path)
     rd.add_argument("--out", required=True, type=Path)
+    rd.add_argument("--display", type=Path, help="dir of sidecar display files <n>.json (used when the dossier has no display object)")
 
     args = ap.parse_args(argv)
     if not args.config:
@@ -108,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "render":
         from . import render
 
-        res = render.render(cfg, args.extract, args.dossier, args.out)
+        res = render.render(cfg, args.extract, args.dossier, args.out, args.display)
     elif args.cmd == "report":
         from . import report
 

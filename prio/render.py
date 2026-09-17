@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,66 +44,38 @@ h1 { font-size: 1.4rem; margin: .5rem 0 .25rem; } .sub { color: var(--muted); fo
 nav.cats a { margin-right: 1rem; }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; background: #fff; }
 th, td { border: 1px solid var(--border); padding: .35rem .5rem; vertical-align: top; text-align: left; }
-th { background: #f0f0f0; cursor: pointer; user-select: none; position: sticky; top: 0; }
-th:hover { background: #e4e4e4; }
-td.cell { cursor: pointer; }
+th { background: #f0f0f0; position: sticky; top: 0; }
 td .brief { display: block; }
-td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: pre-wrap; cursor: auto; }
-td.open .detail { display: block; }
-td.pr { min-width: 22rem; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
+td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; }
+tr.open td .detail { display: block; }
+td.pr { min-width: 22rem; cursor: pointer; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
 td.prio { white-space: nowrap; font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
 td.rev, td.agree, td.size, td.reviews { white-space: nowrap; }
 td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-style: italic; color: #555; }
-.detail ul { margin: .2rem 0 .2rem 1rem; padding: 0; } .detail li { margin: .1rem 0; }
+.detail ul { margin: 0; padding-left: 1.1rem; } .detail li { margin: .15rem 0; }
 .detail .k { color: var(--muted); }
 .legend { font-size: .8rem; color: var(--muted); margin: .5rem 0 1rem; } .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); }
 tr.unranked td { color: var(--muted); }
-.tg { color: var(--link); cursor: pointer; font-weight: 600; margin-right: .3rem; user-select: none; }
-td .detail .tg { float: left; }
-th .tg, td.pr .brief .tg { float: right; margin-left: .5rem; margin-right: 0; }
-.more { font-size: .8rem; margin-left: .3rem; white-space: nowrap; }
+td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
+.more { font-size: .8rem; }
+.legend div { margin: .15rem 0; }
+.covers { font-size: .88rem; background: #fff; border: 1px solid var(--border); padding: .4rem .9rem; margin: .5rem 0 1rem; }
+.covers h3 { font-size: .95rem; margin: .7rem 0 .2rem; } .covers p { margin: .3rem 0; } .covers ul { margin: .2rem 0; }
+.prpage .lead { font-weight: 600; } .prpage ul { margin: .3rem 0; padding-left: 1.2rem; }
 .prpage h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; border-bottom: 1px solid var(--border); }
 .prpage .box { background: #fff; border: 1px solid var(--border); padding: .6rem .8rem; margin: .4rem 0; }
 .prpage .k { color: var(--muted); }
 """
 
 JS = """
-function toggleCell(td, force) {
-  if (force === undefined) td.classList.toggle('open'); else td.classList.toggle('open', force);
-}
-function anyClosed(cells) { return Array.prototype.some.call(cells, function (c) { return !c.classList.contains('open'); }); }
-function refreshGlyphs() {
-  document.querySelectorAll('th[data-col]').forEach(function (th) {
-    var cells = document.querySelectorAll('td.cell[data-col="' + th.dataset.col + '"]');
-    var g = th.querySelector('.tg'); if (g) g.textContent = anyClosed(cells) ? '(+)' : '(\u2212)';
-  });
-  document.querySelectorAll('td.pr').forEach(function (td) {
-    var g = td.querySelector('.brief .tg'); if (g) g.textContent = anyClosed(td.parentElement.querySelectorAll('td.cell')) ? '(+)' : '(\u2212)';
-  });
-}
 document.addEventListener('click', function (ev) {
   if (ev.target.closest('a')) return;
-  var th = ev.target.closest('th[data-col]');
-  if (th) {
-    var cells = document.querySelectorAll('td.cell[data-col="' + th.dataset.col + '"]');
-    var open = anyClosed(cells);
-    cells.forEach(function (c) { toggleCell(c, open); });
-    refreshGlyphs(); return;
-  }
-  var td = ev.target.closest('td.cell');
+  var td = ev.target.closest('td.pr');
   if (!td) return;
-  if (ev.target.closest('.detail') && !ev.target.classList.contains('tg')) return;
-  if (td.classList.contains('pr') && !ev.target.closest('.detail')) {
-    var row = td.parentElement.querySelectorAll('td.cell');
-    var open = anyClosed(row);
-    row.forEach(function (c) { toggleCell(c, open); });
-  } else {
-    toggleCell(td, false);
-    if (!ev.target.classList.contains('tg')) toggleCell(td, true);
-  }
-  refreshGlyphs();
+  var tr = td.parentElement;
+  tr.classList.toggle('open');
+  var g = td.querySelector('.tg'); if (g) g.textContent = tr.classList.contains('open') ? '(\\u2212)' : '(+)';
 });
-document.addEventListener('DOMContentLoaded', refreshGlyphs);
 """
 
 
@@ -126,19 +99,86 @@ def lead(text: str, n: int = 2) -> str:
     return " ".join(parts[:n])
 
 
-def _cell(col: str, brief: str, detail_html: str, tooltip: str, extra_class: str = "", style: str = "",
-          more: str | None = None) -> str:
-    more_html = f' <a class="more" href="{_e(more)}">full analysis</a>' if more else ""
-    return (f'<td class="cell {col} {extra_class}" data-col="{col}" title="{_e(tooltip)}" style="{style}">'
-            f'<span class="brief">{brief}</span><div class="detail"><span class="tg" title="collapse">(&minus;)</span>{detail_html}{more_html}</div></td>')
-
-
 def _ul(items) -> str:
     items = [i for i in items if i]
     return "<ul>" + "".join(f"<li>{_e(i)}</li>" for i in items) + "</ul>" if items else ""
 
 
-def _reviews(rec: dict) -> tuple[str, str, str, str]:
+def _cell(col: str, brief: str, lines: list[str], style: str = "", extra_html: str = "") -> str:
+    tip = "\n".join(lines)
+    return (f'<td class="{col}" title="{_e(tip)}" style="{style}">'
+            f'<span class="brief">{brief}</span><div class="detail">{_ul(lines)}{extra_html}</div></td>')
+
+
+def load_display(display_dir: Path | None, n: int, d: dict) -> dict | None:
+    """Display lines: the dossier's own display object, else a sidecar file."""
+    r = d.get("result") or {}
+    if r.get("display"):
+        return r["display"]
+    if display_dir and (display_dir / f"{n}.json").exists():
+        with open(display_dir / f"{n}.json") as f:
+            return json.load(f)
+    return None
+
+
+def display_lines(disp: dict | None, r: dict, cat: dict | None) -> dict:
+    """Lines for each cell; falls back to leading sentences of the long text."""
+    out = {
+        "goal": [lead(r["summary"], 2)],
+        "reviewability": [lead(r["reviewability"]["reason"], 1)],
+        "agreement": [r["agreement"].get("summary") or lead(r["agreement"]["reason"], 1)],
+        "why": [lead(cat["rationale"], 2)] if cat else [],
+    }
+    if disp:
+        out["goal"] = disp.get("goal") or out["goal"]
+        out["reviewability"] = disp.get("reviewability") or out["reviewability"]
+        out["agreement"] = disp.get("agreement") or out["agreement"]
+        if cat:
+            for c in disp.get("categories", []):
+                if c.get("name") == cat["name"] and c.get("why"):
+                    out["why"] = c["why"]
+    return out
+
+
+def md_to_html(text: str) -> str:
+    """Small markdown subset for category files: headings, paragraphs, lists, code spans, bold."""
+    def inline(t: str) -> str:
+        t = _e(t)
+        t = re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
+        t = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", t)
+        return t
+    out = []
+    para: list[str] = []
+    in_list = False
+    def flush():
+        nonlocal para
+        if para:
+            out.append("<p>" + inline(" ".join(para)) + "</p>")
+            para = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            flush()
+            if in_list: out.append("</ul>"); in_list = False
+            out.append(f"<h3>{inline(line.lstrip('#').strip())}</h3>")
+        elif line.lstrip().startswith("- "):
+            flush()
+            if not in_list: out.append("<ul>"); in_list = True
+            out.append(f"<li>{inline(line.lstrip()[2:])}</li>")
+        elif not line.strip():
+            flush()
+            if in_list: out.append("</ul>"); in_list = False
+        else:
+            if in_list and line.startswith("  "):
+                out[-1] = out[-1][:-5] + " " + inline(line.strip()) + "</li>"
+            else:
+                if in_list: out.append("</ul>"); in_list = False
+                para.append(line.strip())
+    flush()
+    if in_list: out.append("</ul>")
+    return "".join(out)
+
+
+def _reviews(rec: dict) -> tuple[str, list[str], str, str]:
     db = rec.get("bot", {}).get("drahtbot", {}).get("reviews", {})
     ack = db.get("ack", []); stale = db.get("stale_ack", [])
     nacks = db.get("nack", []) + db.get("concept_nack", []) + db.get("approach_nack", [])
@@ -147,93 +187,97 @@ def _reviews(rec: dict) -> tuple[str, str, str, str]:
         brief += f' <span class="stale">(+{len(stale)})</span>'
     if nacks:
         brief += f' <span class="nack">-{len(nacks)}</span>'
-    parts = []
-    tip = []
+    lines, links = [], []
     for key, label in (("ack", "ACK"), ("stale_ack", "Stale ACK"), ("approach_ack", "Approach ACK"),
                        ("concept_ack", "Concept ACK"), ("nack", "NACK"), ("approach_nack", "Approach NACK"),
                        ("concept_nack", "Concept NACK")):
         who = db.get(key, [])
         if who:
-            links = ", ".join(f'<a href="{_e(w["url"])}">{_e(w["login"])}</a>' for w in who)
-            parts.append(f'<div><span class="k">{label}:</span> {links}</div>')
-            tip.append(f"{label}: " + ", ".join(w["login"] for w in who))
-    detail = "".join(parts) or "<div>No review verdicts recorded by DrahtBot.</div>"
+            lines.append(f"{label}: " + ", ".join(w["login"] for w in who))
+            links.append(f'<li>{label}: ' + ", ".join(f'<a href="{_e(w["url"])}">{_e(w["login"])}</a>' for w in who) + "</li>")
+    if not lines:
+        lines = ["No review verdicts recorded"]
     g = min(len(ack), 4)
     style = f"background: rgb({255 - g * 22},255,{255 - g * 22});"
-    return brief, detail, "\n".join(tip) or "No review verdicts", style
+    return brief, lines, ("<ul>" + "".join(links) + "</ul>") if links else "", style
 
 
-def _row(rec: dict, d: dict, cat: dict, cat_name: str, pr_href: str) -> str:
+def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_href: str) -> str:
     r = d["result"]
     n = rec["number"]
+    L = display_lines(disp, r, cat)
     others = [f"{c['name']} {c['band']}" for c in r["categories"] if c["member"] and c["name"] != cat_name]
     pr_brief = (f'<span class="tg" title="expand/collapse row">(+)</span><a href="{_e(rec["url"])}">#{n}</a> '
                 f'<span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
-    pr_detail = f'<div>{_e(lead(r["summary"], 3))}</div>' + (f'<div><span class="k">Also in:</span> {_e(", ".join(others))}</div>' if others else "")
-    f = cat["factors"]
+    pr_extra = ((f'<div><span class="k">Also in:</span> {_e(", ".join(others))}</div>' if others else "")
+                + f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>')
     tag = cat.get("reason_tag") or ""
     prio_brief = f'{_e(cat["band"])}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
-    prio_detail = f'<div>{_e(lead(cat["rationale"]))}</div>'
     prio_style = f"background:{_shade(cat['score'])};" if cat["band"] != "Unranked" else ""
     rv = r["reviewability"]
-    rv_detail = f'<div>{_e(lead(rv["reason"]))}</div>'
     rv_style = f"background:{REVIEWABILITY_COLORS.get(rv['state'], '#fff')};"
-    rw_brief, rw_detail, rw_tip, rw_style = _reviews(rec)
+    rw_brief, rw_lines, rw_links, rw_style = _reviews(rec)
     ag = r["agreement"]
-    ag_summary = ag.get("summary") or lead(ag["reason"])
-    ag_detail = f'<div>{_e(ag_summary)}</div>'
     ag_style = f"background:{AGREEMENT_COLORS.get(ag['state'], '#fff')};"
     sz_brief = f'+{rec["additions"]}/-{rec["deletions"]}'
     if rec.get("test_lines"):
         sz_brief += f' <span class="stale">({rec["test_lines"]} tests)</span>'
-    sz_detail = (f'<div>{rec["changed_files"]} files, {rec["commit_count"]} commits, bucket {rec["size_bucket"]}'
-                 + (f', {rec["test_lines"]} lines under test/bench/ci' if rec.get("test_lines") is not None else "") + '</div>')
+    sz_lines = [f'{rec["changed_files"]} files', f'{rec["commit_count"]} commits']
+    if rec.get("test_lines") is not None:
+        sz_lines.append(f'{rec["test_lines"]} lines under test/bench/ci')
     sz_style = f"background:{SIZE_COLORS.get(rec['size_bucket'], '#fff')};"
     cls = "unranked" if cat["band"] == "Unranked" else ""
+    reviews_td = (f'<td class="reviews" title="{_e(chr(10).join(rw_lines))}" style="{rw_style}">'
+                  f'<span class="brief">{rw_brief}</span><div class="detail">{rw_links or _ul(rw_lines)}</div></td>')
     return (f'<tr class="{cls}" id="pr-{n}">'
-            + _cell("pr", pr_brief, pr_detail, lead(r["summary"], 3), more=pr_href)
-            + _cell("prio", prio_brief, prio_detail, lead(cat["rationale"]), style=prio_style, more=f"{pr_href}#cat-{cat_name}")
-            + _cell("rev", _e(rv["label"]), rv_detail, lead(rv["reason"]), style=rv_style, more=f"{pr_href}#reviewability")
-            + _cell("reviews", rw_brief, rw_detail, rw_tip, style=rw_style)
-            + _cell("agree", _e(ag["state"]), ag_detail, ag_summary, style=ag_style, more=f"{pr_href}#agreement")
-            + _cell("size", sz_brief, sz_detail, f'{rec["changed_files"]} files, {rec["commit_count"]} commits', style=sz_style, more=f"{pr_href}#files")
+            + _cell("pr", pr_brief, L["goal"], extra_html=pr_extra)
+            + _cell("prio", prio_brief, L["why"], style=prio_style)
+            + _cell("rev", _e(rv["label"]), L["reviewability"], style=rv_style)
+            + reviews_td
+            + _cell("agree", _e(ag["state"]), L["agreement"], style=ag_style)
+            + _cell("size", sz_brief, sz_lines, style=sz_style)
             + "</tr>")
 
 
-def _pr_page(rec: dict, d: dict, cats: dict, back_links: str) -> str:
-    """Full analysis for one PR: every field the model produced, plus the
-    files and data links. The category pages show only the leading sentences."""
+def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]]) -> str:
     r = d["result"]
     n = rec["number"]
+    L = display_lines(disp, r, None)
     b = []
     b.append(f'<p><a href="{_e(rec["url"])}">{_e(rec["url"])}</a> · <span class="author">{_e(rec["author"])}</span> · '
              f'+{rec["additions"]}/-{rec["deletions"]} in {rec["changed_files"]} files, {rec["commit_count"]} commits · '
-             f'labels: {_e(", ".join(rec["labels"]) or "none")} · {"draft · " if rec["draft"] else ""}{back_links}</p>')
-    b.append(f'<h2>Summary</h2><div class="box">{_e(r["summary"])}<p><span class="k">Problem:</span> {_e(r["problem"])}</p></div>')
+             f'labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}</p>')
+    b.append(f'<h2>Goal</h2><div class="box">{_ul(L["goal"])}<p>{_e(r["summary"])}</p><p><span class="k">Problem:</span> {_e(r["problem"])}</p></div>')
     for c in r["categories"]:
         if not c["member"]:
             continue
         f = c["factors"]
         title = cats[c["name"]].title if c["name"] in cats else c["name"]
-        b.append(f'<h2 id="cat-{_e(c["name"])}">{_e(title)}: {_e(c["band"])}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + '</h2>'
-                 f'<div class="box"><p>{_e(c["rationale"])}</p><p><span class="k">Membership:</span> {_e(c["evidence"])}</p>'
+        pos, total = ranks.get(c["name"], (0, 0))
+        why = display_lines(disp, r, c)["why"]
+        b.append(f'<h2 id="cat-{_e(c["name"])}">Category: <a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>'
+                 + (f' (#{pos} of {total})' if total else "") + '</h2>'
+                 f'<div class="box"><p class="lead">{_e(c["band"])}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + '</p>'
+                 f'{_ul(why)}<p>{_e(c["rationale"])}</p><p><span class="k">Membership:</span> {_e(c["evidence"])}</p>'
                  f'<p><span class="k">Factors:</span> security/stability {f["security_stability"]}, bug {f["bug_severity"]}, performance {f["performance"]}, '
                  f'user value {f["user_value"]}, leverage {f["leverage"]}</p></div>')
     rv = r["reviewability"]
-    b.append(f'<h2 id="reviewability">Reviewability: {_e(rv["state"])} ({_e(rv["label"])})</h2><div class="box"><p>{_e(rv["reason"])}</p>'
+    rv_title = rv["state"] if rv["label"].strip().lower() == rv["state"].lower() else f'{rv["state"]}: {rv["label"]}'
+    b.append(f'<h2 id="reviewability">Reviewability: {_e(rv_title)}</h2><div class="box">{_ul(L["reviewability"])}<p>{_e(rv["reason"])}</p>'
              f'<p><span class="k">Author status:</span> {_e(r["discussion"]["author_status"])}</p>'
              + (f'<p><span class="k">Open concerns:</span>{_ul(r["discussion"]["open_concerns"])}</p>' if r["discussion"]["open_concerns"] else "")
              + (f'<p><span class="k">Resolved concerns:</span>{_ul(r["discussion"]["resolved_concerns"])}</p>' if r["discussion"]["resolved_concerns"] else "") + '</div>')
     ag = r["agreement"]
-    rw_brief, rw_detail, _, _ = _reviews(rec)
-    b.append(f'<h2 id="agreement">Agreement: {_e(ag["state"])}</h2><div class="box">' + (f'<p>{_e(ag["summary"])}</p>' if ag.get("summary") else "")
-             + f'<p>{_e(ag["reason"])}</p>{_ul(ag["evidence"])}<p><span class="k">Review verdicts (DrahtBot):</span> {rw_brief}</p>{rw_detail}</div>')
+    rw_brief, rw_lines, rw_links, _ = _reviews(rec)
+    b.append(f'<h2 id="agreement">Agreement: {_e(ag["state"])}</h2><div class="box">{_ul(L["agreement"])}'
+             + (f'<p>{_e(ag["summary"])}</p>' if ag.get("summary") else "")
+             + f'<p>{_e(ag["reason"])}</p>{_ul(ag["evidence"])}<p><span class="k">Review verdicts (DrahtBot):</span> {rw_brief}</p>{rw_links}</div>')
     dep = r["dependencies"]
     if dep["depends_on"] or dep["enables"] or rec["stack"]["based_on"] or rec["stack"]["base_for"]:
         b.append('<h2 id="deps">Dependencies</h2><div class="box">'
                  + (f'<p><span class="k">Depends on:</span> {_e(", ".join("#" + str(x) for x in dep["depends_on"]))}</p>' if dep["depends_on"] else "")
                  + (f'<p><span class="k">Enables:</span>{_ul(dep["enables"])}</p>' if dep["enables"] else "")
-                 + (f'<p><span class="k">Shares commits with (based on):</span> {_e(", ".join("#" + str(x) for x in rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
+                 + (f'<p><span class="k">Based on (shares commits with):</span> {_e(", ".join("#" + str(x) for x in rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
                  + (f'<p><span class="k">Base for:</span> {_e(", ".join("#" + str(x) for x in rec["stack"]["base_for"]))}</p>' if rec["stack"]["base_for"] else "") + '</div>')
     files = rec.get("files") or []
     b.append(f'<h2 id="files">Files</h2><div class="box">'
@@ -241,10 +285,11 @@ def _pr_page(rec: dict, d: dict, cats: dict, back_links: str) -> str:
              + (_ul(f'{x["path"]} +{x["add"]}/-{x["del"]}' for x in sorted(files, key=lambda x: -((x["add"] or 0) + (x["del"] or 0)))) if files else "<p>File list not available for this run.</p>") + '</div>')
     if r["uncertainties"]:
         b.append(f'<h2>Uncertainties</h2><div class="box">{_ul(r["uncertainties"])}</div>')
-    b.append(f'<h2>Card</h2><div class="box">{_e(r["card"])}</div>')
+    b.append(f'<h2>Card</h2><div class="box"><p>{_e(r["card"])}</p></div>')
+    src = f' · display text: {_e(disp.get("source"))}' if disp and disp.get("synthetic") else ""
     b.append(f'<h2>Data</h2><div class="box"><a href="../data/dossier-{n}.json">dossier JSON</a> · <a href="../data/extract-{n}.json">extract JSON</a> · '
              f'model {_e(d.get("model"))}, generated {_e((d.get("created") or "")[:16])}, confidence {_e(r["confidence"])}, '
-             f'input hash {_e(d.get("input_hash"))}</div>')
+             f'input hash {_e(d.get("input_hash"))}{src}</div>')
     return '<div class="prpage">' + "".join(b) + "</div>"
 
 
@@ -254,7 +299,7 @@ def _page(title: str, body: str, sub: str = "") -> str:
             f'<h1>{_e(title)}</h1><div class="sub">{sub}</div>{body}</main><script>{JS}</script></body></html>')
 
 
-def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path) -> dict:
+def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None) -> dict:
     cats = {c.name: c for c in load_categories(cfg.categories_dir)}
     dossiers = load_latest(dossier_dir)
     recs: dict[int, dict] = {}
@@ -266,6 +311,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path) -> 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "data").mkdir(exist_ok=True)
     (out_dir / "pr").mkdir(exist_ok=True)
+    displays = {n: load_display(display_dir, n, d) for n, d in dossiers.items()}
     members: dict[str, list[tuple[float, int, dict]]] = {}
     for n, d in dossiers.items():
         r = d.get("result")
@@ -276,44 +322,53 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path) -> 
         for c in r["categories"]:
             if c["member"]:
                 members.setdefault(c["name"], []).append((c["score"], n, c))
+    for rows in members.values():
+        rows.sort(key=lambda x: -x[0])
+    ranks: dict[int, dict[str, tuple[int, int]]] = {}
+    for name, rows in members.items():
+        for i, (_, n, _c) in enumerate(rows, 1):
+            ranks.setdefault(n, {})[name] = (i, len(rows))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    repo_url = (cfg.raw.get("project", {}) or {}).get("repo_url")
     banner = ('<div class="banner">Every band, state, and summary on this page is model output against '
               'version-controlled definitions, shown with its rationale. It is one person\'s tool for finding PRs worth '
-              'reviewing, not a project process. Click any cell for its reasoning; click a column header or its (+) to expand the column; '
-              'click a PR cell or its (+) to expand the row; (&minus;) collapses. Each expanded cell links to the full analysis.</div>')
-    legend = ('<div class="legend">Priority cell shade: lighter is higher within the band. '
-              f'Reviewability: <span style="background:{REVIEWABILITY_COLORS["Ready"]}">Ready</span>'
+              'reviewing, not a project process. Click a PR to expand its row; hover any cell for the same text.'
+              + (f' Categories and their definitions live in <a href="{_e(repo_url)}">{_e(repo_url.replace("https://github.com/", ""))}</a>; '
+                 'pull requests that fix a category description or add a category are welcome.' if repo_url else "") + '</div>')
+    legend = ('<div class="legend">'
+              '<div>Priority: P1 to P4 within this category, then a one-word reason. Lighter cell = higher within the band.</div>'
+              f'<div>Reviewability: <span style="background:{REVIEWABILITY_COLORS["Ready"]}">Ready</span>'
               f'<span style="background:{REVIEWABILITY_COLORS["Stale"]}">Stale</span>'
-              f'<span style="background:{REVIEWABILITY_COLORS["Paused"]}">Paused</span> '
-              'Reviews: current ACKs (+stale) <b style="color:#b00020">-NACKs</b>. Agreement: '
-              + "".join(f'<span style="background:{v}">{k}</span>' for k, v in AGREEMENT_COLORS.items()) + "</div>")
+              f'<span style="background:{REVIEWABILITY_COLORS["Paused"]}">Paused</span> (label says why)</div>'
+              '<div>Reviews: current code-review ACKs, then (+stale ACKs) and <b style="color:#b00020">-NACKs</b>; greener = more ACKs.</div>'
+              '<div>Agreement: ' + "".join(f'<span style="background:{v}">{k}</span>' for k, v in AGREEMENT_COLORS.items()) + '</div>'
+              f'<div>Size: added/deleted lines, tests in parentheses; <span style="background:{SIZE_COLORS["S"]}">S</span>'
+              f'<span style="background:{SIZE_COLORS["M"]}">M</span><span style="background:{SIZE_COLORS["L"]}">L</span>'
+              f'<span style="background:{SIZE_COLORS["XL"]}">XL</span></div></div>')
     nav = '<nav class="cats">' + " ".join(
         f'<a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)} ({len(rows)})</a>'
         for name, rows in sorted(members.items())) + "</nav>"
     pages = []
     for name, rows in sorted(members.items()):
-        rows.sort(key=lambda x: -x[0])
         cat = cats.get(name)
         title = cat.title if cat else name
-        def th(col, label):
-            return f'<th data-col="{col}" title="expand/collapse column">{label}<span class="tg">(+)</span></th>'
-        head = ('<table><thead><tr>' + th("pr", "PR") + th("prio", "Priority") + th("rev", "Reviewability")
-                + th("reviews", "Reviews") + th("agree", "Agreement") + th("size", "Size") + '</tr></thead><tbody>')
-        body_rows = "".join(_row(recs[n], dossiers[n], c, name, f"pr/{n}.html") for _, n, c in rows)
+        head = ('<table><thead><tr><th>PR</th><th>Priority</th><th>Reviewability</th><th>Reviews</th>'
+                '<th>Agreement</th><th>Size</th></tr></thead><tbody>')
+        body_rows = "".join(_row(recs[n], dossiers[n], c, name, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
         covers = ""
         if cat:
-            covers = f'<details style="margin:.5rem 0 1rem;font-size:.85rem"><summary>What this category covers and what matters in it</summary><pre style="white-space:pre-wrap">{_e(cat.body)}</pre></details>'
+            src = f'<p class="more"><a href="{_e(repo_url)}/blob/main/categories/{_e(name)}.md">Source on GitHub</a> · edits and new categories via pull request</p>' if repo_url else ""
+            covers = (f'<details class="covers"><summary>What this category covers and what matters in it</summary>'
+                      f'{md_to_html(cat.body)}{src}</details>')
         body = banner + nav + covers + legend + head + body_rows + "</tbody></table>"
         (out_dir / f"{name}.html").write_text(_page(f"{title}: review map", body, f"{len(rows)} PRs · generated {stamp}"))
         pages.append(name)
     for n, d in dossiers.items():
         if not d.get("result") or n not in recs:
             continue
-        in_cats = [c["name"] for c in d["result"]["categories"] if c["member"]]
-        back = " · ".join(f'<a href="../{_e(c)}.html#pr-{n}">{_e(cats[c].title if c in cats else c)}</a>' for c in in_cats)
-        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, back), "full analysis"))
+        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {})), "full analysis"))
     index = banner + "<ul>" + "".join(
         f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a> ({len(rows)} PRs)</li>'
         for name, rows in sorted(members.items())) + "</ul>"
     (out_dir / "index.html").write_text(_page(cfg.site_title, index, f"{len(dossiers)} PRs assessed · generated {stamp}"))
-    return {"pages": pages, "prs": len(dossiers), "out": str(out_dir)}
+    return {"pages": pages, "prs": len(dossiers), "out": str(out_dir), "display_files": sum(1 for v in displays.values() if v)}
