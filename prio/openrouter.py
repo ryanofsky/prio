@@ -101,6 +101,35 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
                            model=out.get("model"), provider=(out.get("provider") or ""))
 
 
+_PRICES: dict[str, tuple[float, float]] = {}
+
+
+def prices(model: str) -> tuple[float, float] | None:
+    """(input, output) USD per million tokens from OpenRouter's model list; cached per process."""
+    if not _PRICES:
+        try:
+            with urllib.request.urlopen(urllib.request.Request("https://openrouter.ai/api/v1/models"), timeout=30) as r:
+                for m in json.load(r).get("data", []):
+                    pr = m.get("pricing") or {}
+                    try:
+                        _PRICES[m["id"]] = (float(pr.get("prompt", 0)) * 1e6, float(pr.get("completion", 0)) * 1e6)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            return None
+    return _PRICES.get(model[len(PREFIX):])
+
+
+def estimate_cost(model: str, system_text: str, users: list[str], out_per: int = 4000) -> float | None:
+    """Rough cost: characters/3.5 as tokens, output guess per request, list prices."""
+    p = prices(model)
+    if not p:
+        return None
+    inp, out = p
+    toks = sum(len(u) for u in users) / 3.5 + len(system_text) / 3.5 * len(users)
+    return (toks * inp + out_per * len(users) * out) / 1e6
+
+
 def run_many(jobs: list, fn, workers: int | None = None):
     """Run fn(job) over jobs with a thread pool, yielding results as they
     complete (not in order), so progress is visible; exceptions are yielded

@@ -366,7 +366,7 @@ def _client():
     return anthropic.Anthropic()
 
 
-def estimate_cost(client, model: str, system: list[dict], users: list[str], sync: bool, out_per: int = 1500) -> float:
+def estimate_cost(client, model: str, system: list[dict], users: list[str], sync: bool, out_per: int = 4500) -> float:
     """Rough cost from token counts: cached system once, every user turn, a guess at output."""
     from .prices import PRICES
     inp, out = PRICES[model]
@@ -407,11 +407,16 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
         print("\n===== SAMPLE USER TURN =====\n" + u0[:6000] + ("\n...[truncated for display]" if len(u0) > 6000 else ""))
         return {"dry_run": True, "count": len(todo)}
 
-    from .openrouter import is_openrouter, chat, run_many
+    from .openrouter import is_openrouter, chat, run_many, estimate_cost as or_estimate
     if is_openrouter(model):
+        users = [build_user(r, cats, budget_tokens, git_dir, patch_chars) for r in todo.values()]
+        est = or_estimate(model, system[0]["text"], users)
         if dry_run:
-            print(f"openrouter model {model}: no token counting; {len(todo)} PRs would be sent synchronously (4 at a time)", file=sys.stderr)
-            return {"dry_run": True, "count": len(todo)}
+            print(f"{model}: {len(todo)} PRs synchronously; estimated ~${est:.2f}" if est is not None else f"{model}: {len(todo)} PRs; no price found", file=sys.stderr)
+            return {"dry_run": True, "count": len(todo), "estimated_cost": None if est is None else round(est, 2)}
+        if max_cost is not None and est is not None and est > max_cost:
+            print(f"estimated ${est:.2f} exceeds --max-cost {max_cost:.2f}; not submitting {len(todo)} PRs", file=sys.stderr)
+            return {"skipped": len(todo), "estimated_cost": round(est, 2), "max_cost": max_cost}
         total = 0.0
         items = list(todo.items())
         def one(item):

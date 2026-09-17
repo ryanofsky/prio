@@ -50,6 +50,8 @@ let
     fi
     export PYTHONPATH="$D/src/engine"
     export ANTHROPIC_API_KEY="$(cat ${cfg.apiKeyFile})"
+    ${lib.optionalString (cfg.openrouterKeyFile != null) ''[ -r ${cfg.openrouterKeyFile} ] && export OPENROUTER_API_KEY="$(cat ${cfg.openrouterKeyFile})"''}
+    export PRIO_OPENROUTER_WORKERS=${toString cfg.openrouterWorkers}
     prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
     mark "code and environment ready"
 
@@ -133,6 +135,8 @@ in
     projectRepo = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "git URL of the project being ranked, for diffs; null disables the sidecar"; };
     backupDir = lib.mkOption { type = lib.types.str; description = "github-metadata-backup dir with pulls/ and issues/"; };
     apiKeyFile = lib.mkOption { type = lib.types.str; default = "/var/lib/prio/api-key"; };
+    openrouterKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.str; default = "/var/lib/prio/openrouter-key"; description = "for models named openrouter/<id>"; };
+    openrouterWorkers = lib.mkOption { type = lib.types.int; default = 8; };
     model = lib.mkOption { type = lib.types.str; default = "claude-sonnet-5"; };
     displayModel = lib.mkOption { type = lib.types.str; default = "claude-sonnet-5"; };
     effort = lib.mkOption { type = lib.types.str; default = "medium"; };

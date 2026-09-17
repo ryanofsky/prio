@@ -36,7 +36,10 @@ Rules:
   behavior, interfaces, data, or the code someone maintaining that area
   would review. A mechanical edit that only follows from a change
   elsewhere (a call site updated for a new signature, a test harness
-  adjusted to keep compiling) does not make the PR a member.
+  adjusted to keep compiling) does not make the PR a member. When in
+  doubt, leave the category out: most PRs belong to one or two
+  categories, and a membership that a reviewer of that area would not
+  thank you for is noise.
 - Every priority band comes with a factor breakdown and a rationale that
   cites concrete evidence: quote or closely paraphrase a sentence from the
   description, a commit message, a linked issue, or a comment, with who
