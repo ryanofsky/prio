@@ -544,12 +544,25 @@ def have_dossier(out_dir: Path, n: int, h: str, model: str) -> bool:
 
 
 def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:
+    """Write the payload and point 'latest' at it, unless the payload is a
+    failure (no result) and 'latest' already names a usable output: a
+    request that errored (rate limit, exhausted credits, bad JSON) must not
+    hide a PR from the site. The failed file is still written so the run
+    log and status page can show it, and have_dossier() will retry it."""
     d = out_dir / str(n)
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{stem}.json"
     with open(p, "w") as f:
         json.dump(payload, f, indent=1)
-    (d / "latest").write_text(stem + "\n")
+    latest = d / "latest"
+    if payload.get("result") is None and latest.exists():
+        try:
+            with open(d / f"{latest.read_text().strip()}.json") as f:
+                if json.load(f).get("result") is not None:
+                    return p
+        except (OSError, json.JSONDecodeError):
+            pass
+    latest.write_text(stem + "\n")
     return p
 
 
