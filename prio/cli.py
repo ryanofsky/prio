@@ -131,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--if-stale", action="store_true", help="keep only PRs whose latest dossier used a different prompt (or model, with --model)")
     se.add_argument("--model", help="with --if-stale: also treat dossiers by another model as stale")
     se.add_argument("--format", default="lines", choices=["lines", "comma", "json"])
+    se.add_argument("--agreement-reads", type=int, default=1, choices=[1, 2], help="must match the submit setting for --if-stale to compare the right prompt hash")
 
     st = sub.add_parser("status-page", help="write status.html/status.json into the site dir from pipeline state")
     st.add_argument("--data-dir", required=True, type=Path)
@@ -198,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
                    agreement=split(args.agreement), reviewability=split(args.reviewability),
                    confidence=split(args.confidence), flagged=args.flagged, missing=args.missing,
                    failed=args.failed, categories=set(args.category) if args.category else None,
-                   if_stale=args.if_stale, model=args.model, fmt=args.format)
+                   if_stale=args.if_stale, model=args.model, fmt=args.format, agreement_reads=args.agreement_reads)
         return 0
     elif args.cmd == "status-page":
         from . import status

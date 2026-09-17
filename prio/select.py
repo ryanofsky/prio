@@ -51,7 +51,7 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, rank_dir: Path | None
         top: int | None = None, bands: set[str] | None = None, agreement: set[str] | None = None,
         reviewability: set[str] | None = None, confidence: set[str] | None = None, flagged: bool = False,
         missing: bool = False, failed: bool = False, categories: set[str] | None = None,
-        if_stale: bool = False, model: str | None = None, fmt: str = "lines") -> dict:
+        if_stale: bool = False, model: str | None = None, fmt: str = "lines", agreement_reads: int = 1) -> dict:
     from .render import load_rank, merge_rank
 
     cats = load_categories(cfg.categories_dir)
@@ -114,7 +114,8 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, rank_dir: Path | None
     if categories:
         keep = {n for name, rows in members.items() if name in categories for _, n, _c in rows}
         chosen = {n: w for n, w in chosen.items() if n in keep}
-    current = prompt_hash(build_system(cfg, cats))
+    from .dossier import agreement_system
+    current = prompt_hash(build_system(cfg, cats), agreement_system()[0]["text"] if agreement_reads > 1 else "")
     if if_stale:
         def stale(n: int) -> bool:
             d = good.get(n)

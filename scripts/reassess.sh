@@ -28,7 +28,7 @@ trap 'mark "FAILED at line $LINENO"' ERR
 for name in engine config; do git -C "$D/src/$name" pull --quiet --ff-only; echo "$name at $(git -C "$D/src/$name" rev-parse --short HEAD)"; done
 : > "$D/status/current.log"; mark "targeted re-assessment started: $*"
 LIST=$D/status/reassess-prs.txt
-prio select --extract "$D/extract" --dossier "$D/dossier" --rank "$D/rank" "$@" > "$LIST"
+prio select --extract "$D/extract" --dossier "$D/dossier" --rank "$D/rank" --agreement-reads "$READS" "$@" > "$LIST"
 if [ ! -s "$LIST" ]; then mark "done: nothing selected"; exit 0; fi
 echo "selected: $(tr '\n' ' ' < "$LIST")"
 git_arg=(); [ -d "$D/git" ] && git_arg=(--git "$D/git")
