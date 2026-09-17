@@ -55,37 +55,44 @@ Rules:
   push is resolved.
 - For Agreement, fill `participants` first: one entry per person in the
   user turn's participants list, with a stance, so that every reviewer's
-  comments are read before any state is chosen. Then the `objections`
-  list: one entry per objection in the thread with who raised it, its
-  kind, the concrete harm it names, whether the reviewer treats it as
-  blocking, whether the author posted a reply, whether a fix was actually
-  pushed, its status, and for anything not open the evidence that settled
-  it (a quote from the reviewer's follow-up or the author's reply, with
-  its date). Then the `support` list: who spoke for the PR and why. The
-  pipeline derives the Agreement state from these lists and checks them
-  against the thread: an open safety or correctness objection is
-  blocking whoever raised it, and an open approach, scope, or interface
-  objection from a member is blocking, unless the reviewer said it is
-  not; a resolved objection without resolution evidence is treated as
-  open; an author reply is only counted if the author actually commented
-  after the objection; a participant you skip is recorded as a gap. So
-  accuracy of the lists is what matters; your own `state` is recorded
-  next to the derived one. Rules that models get wrong: an author
-  agreeing in principle without pushing the change leaves the objection
-  open; a force push is not a reply; the absence of the word NACK does
-  not make an objection nonblocking when its substance is a rejection
-  ("this seems backwards to me", "I don't think this should go in",
-  "potential footgun for users" from a maintainer are rejections);
-  a concern phrased tentatively by an experienced reviewer ("this
-  breaks my security assumptions", "I'm not sure this was a good idea")
-  is an objection with a harm; an objection from one reviewer is not
-  answered by another reviewer's approval; check dates before calling an
-  objection answered; an old agreed-to-disagree that the project has
-  since moved past (the disputed approach was adopted elsewhere) is
-  resolved, not standing. Approvals with no rationale from accounts with
-  no history in the project are not support. One reviewer with a real
-  rationale and no open objection is Strong. Objections the author
-  addressed in a push and the objector did not follow up on are
+  comments are read before any state is chosen. A participant whose
+  comments name a cost of merging has stance objection, and that cost
+  must appear in `objections`, even if they also support the PR or
+  phrased it tentatively. Then the `objections` list: one entry per
+  objection with who raised it, its kind, the concrete harm it names,
+  whether the reviewer treats it as blocking, whether the author posted
+  a reply, whether a fix was actually pushed, its status, and for
+  anything not open the evidence that settled it (a quote from the
+  reviewer's follow-up or the author's reply, with its date). Then the
+  `support` list: who spoke for the PR and why. The pipeline derives the
+  Agreement state from these lists and checks them against the thread
+  (a resolved objection without resolution evidence is treated as open;
+  an author reply counts only if the author actually commented after
+  the objection; a safety or correctness objection from a reviewer who
+  is against the PR is blocking; a participant you skip is recorded as
+  a gap), so the accuracy of the lists is what matters; your own `state`
+  is recorded next to the derived one. The scale is biased toward the
+  positive end: silence is consent, and a PR not everybody likes can
+  still merge. Rules that models get wrong, in both directions:
+  an author agreeing in principle without pushing the change leaves the
+  objection open; a force push is not a reply; the absence of the word
+  NACK does not make an objection nonblocking when its substance is a
+  rejection ("this seems backwards to me", "I don't think this should
+  go in" from a maintainer); a concern phrased tentatively by an
+  experienced reviewer ("this breaks my security assumptions") is an
+  objection with a harm; an objection from one reviewer is not answered
+  by another reviewer's approval; check dates before calling an
+  objection answered. And the other way: a question the author answered
+  is not an objection; an inline code question with no named harm is a
+  question; a bug list inside an ACK or Concept ACK review is an open
+  objection by a supporter, not blocking unless they say so; a critic
+  who did not push back after the author's rationale has let it go
+  (resolved), and one who stayed silent for months after the author
+  answered has too; an old agreed-to-disagree that the project has since
+  moved past is resolved, not standing. Approvals with no rationale from
+  accounts with no history in the project are not support. One reviewer
+  with a real rationale and no open objection is Strong. Objections the
+  author addressed in a push and the objector did not follow up on are
   resolved. Style and naming disagreements are not disagreements about
   the change.
 - The `card` is what a later ranking pass sees instead of the whole PR:

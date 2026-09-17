@@ -32,9 +32,7 @@ from .prices import cost_usd, usage_dict
 ENGINE_ROOT = Path(__file__).resolve().parent.parent
 DEFINITIONS = ["priority.md", "bands.md", "reviewability.md", "agreement.md"]
 OBJECTION_KINDS = ["safety", "correctness", "approach", "scope", "interface", "maintenance", "usefulness", "style"]
-BLOCKING_KINDS_ANYONE = {"safety", "correctness"}
-BLOCKING_KINDS_MEMBER = {"approach", "scope", "interface"}
-MEMBER_ASSOC = {"MEMBER", "OWNER", "COLLABORATOR"}
+BLOCKING_KINDS = {"safety", "correctness"}
 BOT_LOGINS = {"DrahtBot", "fanquake-bot", "github-actions"}
 
 BANDS = ["P1", "P2", "P3", "P4", "Unranked"]
@@ -119,7 +117,7 @@ SCHEMA = {
                             "kind": {"type": "string", "enum": OBJECTION_KINDS,
                                      "description": "safety = security, privacy, DoS, funds; correctness = a bug or wrong behavior; approach = the design or the way it is done is wrong, or should be done elsewhere; scope = should be split, is too big, or belongs in another PR; interface = wrong API, option, RPC, or user-facing shape; maintenance = burden or complexity; usefulness = not needed; style = naming, structure, commit layout, nits"},
                             "harm": {"type": "string", "description": "the concrete cost of merging that the reviewer names; empty if it is only 'not useful' or style"},
-                            "blocking": {"type": "boolean", "description": "true if the reviewer says or clearly implies it should not merge as-is (a NACK word is not required). The pipeline also treats open safety and correctness objections, and open approach, scope or interface objections from members, as blocking unless the reviewer said otherwise"},
+                            "blocking": {"type": "boolean", "description": "true if the reviewer says or clearly implies it should not merge as-is (a NACK word is not required). The pipeline also treats an open safety or correctness objection from a reviewer whose stance is objection as blocking"},
                             "author_replied": {"type": "boolean", "description": "true only if the author posted a reply to this objection (a comment or review reply); a push without a comment is not a reply"},
                             "fix_pushed": {"type": "boolean", "description": "true only if a later push actually implements the change; agreeing in principle is false"},
                             "status": {"type": "string", "enum": ["open", "resolved", "agreed_to_disagree"],
@@ -459,16 +457,16 @@ _DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 def check_agreement(ag: dict, thread: dict | None) -> list[str]:
     """Verify the enumeration against the thread and correct what can be
-    checked mechanically; returns the list of corrections made. Blocking is
-    derived from the objection kind and the reviewer's association; a
+    checked mechanically; returns the list of corrections made. A safety or correctness objection from a reviewer
+    whose stance is objection is blocking; a
     'resolved' objection with no resolution evidence is open; an
     'author_replied' claim is dropped when the author posted nothing after
     the objection; participants the model skipped are recorded."""
     notes = []
     commenters = (thread or {}).get("commenters") or {}
     author_dates = (thread or {}).get("author_dates") or []
+    stance = {p.get("login"): p.get("stance") for p in ag.get("participants") or []}
     for o in ag.get("objections") or []:
-        assoc = commenters.get(o.get("reviewer") or "", {}).get("assoc", "NONE")
         kind = o.get("kind")
         if o.get("status") in ("resolved", "agreed_to_disagree"):
             res = (o.get("resolution_evidence") or "").strip()
@@ -482,11 +480,16 @@ def check_agreement(ag: dict, thread: dict | None) -> list[str]:
                 o["status_model"] = o["status"]
                 o["status"] = "open"
                 notes.append(f"{o.get('reviewer')}: resolution evidence ({rd.group(1)}) predates the objection ({od.group(1)}), treated as open")
-        if not o.get("blocking") and o.get("status") == "open" and o.get("harm"):
-            if kind in BLOCKING_KINDS_ANYONE or (kind in BLOCKING_KINDS_MEMBER and assoc in MEMBER_ASSOC):
-                o["blocking"] = True
-                o["blocking_derived"] = f"{kind} objection from {assoc.lower()}"
-                notes.append(f"{o.get('reviewer')}: blocking (open {kind} objection from a {assoc.lower()})")
+        # A safety or correctness objection from someone who is against the
+        # PR is blocking whatever words they used. The same finding inside a
+        # supporter's review (a bug list under a Concept ACK) is an open,
+        # nonblocking objection; approach and scope disagreements are
+        # blocking only when the reviewer's language says so.
+        if (not o.get("blocking") and o.get("status") == "open" and o.get("harm")
+                and kind in BLOCKING_KINDS and stance.get(o.get("reviewer")) == "objection"):
+            o["blocking"] = True
+            o["blocking_derived"] = f"open {kind} objection from a reviewer whose stance is objection"
+            notes.append(f"{o.get('reviewer')}: blocking (open {kind} objection, reviewer against the PR)")
         if o.get("author_replied") and thread is not None:
             m = _DATE.search(o.get("evidence") or "")
             if m and not any(d >= m.group(1) for d in author_dates):
