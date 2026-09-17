@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
-from .dossier import ENGINE_ROOT, _client, _result_payload, load_extract
+from .dossier import ENGINE_ROOT, _client, _result_payload, load_extract, dossier_stem, model_slug
 from .report import load_latest
 
 SCHEMA = {
@@ -76,8 +76,10 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
                model: str, dry_run: bool, sync: bool, force: bool) -> dict:
     dossiers = load_latest(dossier_dir)
     recs = load_extract(extract_dir, only)
+    def dstem(d):  # display output is keyed by the dossier it rewrites plus the display model
+        return f"{dossier_stem(d)}-{model_slug(model)}"
     todo = {n: d for n, d in dossiers.items() if n in recs and d.get("result")
-            and (force or not (out_dir / str(n) / f"{d['input_hash']}.json").exists())}
+            and (force or not (out_dir / str(n) / f"{dstem(d)}.json").exists())}
     print(f"{len(dossiers)} dossiers, {len(todo)} need display lines", file=sys.stderr)
     if not todo:
         return {"submitted": 0}
@@ -92,8 +94,8 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
                 print(f"  request failed: {res}", file=sys.stderr)
                 continue
             n, d, msg = res
-            payload = _result_payload(n, d["input_hash"], model, False, msg, {"stage": "display"})
-            store(out_dir, n, d["input_hash"], payload)
+            payload = _result_payload(n, d["input_hash"], model, False, msg, {"stage": "display", "dossier": dossier_stem(d)})
+            store(out_dir, n, dstem(d), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} ${(payload['cost_usd'] or 0):.4f}" + (f" ERROR {payload['error']}" if payload["error"] else ""), file=sys.stderr)
         print(f"total ${total:.4f}", file=sys.stderr)
@@ -113,8 +115,8 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
         total = 0.0
         for n, d in todo.items():
             msg = client.messages.create(**params(model, recs[n], d["result"]))
-            payload = _result_payload(n, d["input_hash"], model, False, msg, {"stage": "display"})
-            store(out_dir, n, d["input_hash"], payload)
+            payload = _result_payload(n, d["input_hash"], model, False, msg, {"stage": "display", "dossier": dossier_stem(d)})
+            store(out_dir, n, dstem(d), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} ${payload['cost_usd']:.4f}" + (f" ERROR {payload['error']}" if payload["error"] else ""), file=sys.stderr)
         return {"completed": len(todo), "cost_usd": round(total, 4)}
@@ -124,7 +126,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path,
     for n, d in todo.items():
         cid = f"{n}-{d['input_hash']}"
         reqs.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(**params(model, recs[n], d["result"]))))
-        manifest.append({"custom_id": cid, "number": n, "input_hash": d["input_hash"]})
+        manifest.append({"custom_id": cid, "number": n, "input_hash": d["input_hash"], "stem": dstem(d), "dossier": dossier_stem(d)})
     batch = client.messages.batches.create(requests=reqs)
     bdir = out_dir / "batches"
     bdir.mkdir(parents=True, exist_ok=True)

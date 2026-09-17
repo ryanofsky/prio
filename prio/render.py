@@ -25,6 +25,7 @@ from pathlib import Path
 from .categories import load_categories
 from .config import Config
 from .report import load_latest
+from .dossier import dossier_stem
 
 REVIEWABILITY_COLORS = {"Ready": "#d9f2d9", "Stale": "#fff3c4", "Paused": "#ffd6d6"}
 AGREEMENT_COLORS = {
@@ -385,7 +386,7 @@ def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
     ranked, fresh = [], []
     for score, n, c in rows:
         e = by.get(n)
-        if e and hashes.get(str(n)) == dossiers[n].get("input_hash"):
+        if e and hashes.get(str(n)) in (dossiers[n].get("input_hash"), dossier_stem(dossiers[n])):
             c = dict(c, rank_note=e["note"])
             if e["band"] != c["band"]:
                 c.update(rank_band=e["band"], dossier_band=c["band"])
@@ -429,7 +430,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         r = d.get("result")
         if not r or n not in recs:
             continue
-        shutil.copy(dossier_dir / str(n) / f"{d['input_hash']}.json", out_dir / "data" / f"dossier-{n}.json")
+        shutil.copy(dossier_dir / str(n) / f"{(dossier_dir / str(n) / 'latest').read_text().strip()}.json", out_dir / "data" / f"dossier-{n}.json")
         shutil.copy(extract_dir / "prs" / f"{n}.json", out_dir / "data" / f"extract-{n}.json")
         for c in r["categories"]:
             if c["member"]:

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .categories import load_categories
 from .config import Config
-from .dossier import ENGINE_ROOT, _client, load_extract
+from .dossier import ENGINE_ROOT, _client, load_extract, dossier_stem
 from .prices import cost_usd, usage_dict
 from .report import load_latest
 
@@ -110,7 +110,7 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | N
         if latest.exists() and not force:
             with open(out_dir / cat.name / f"{latest.read_text().strip()}.json") as f:
                 prev = json.load(f)
-            if prev.get("dossier_hashes") == {str(n): dossiers[n]["input_hash"] for n, _ in items}:
+            if prev.get("dossier_hashes") == {str(n): dossier_stem(dossiers[n]) for n, _ in items}:
                 print(f"  {cat.name}: unchanged since {prev.get('created', '')[:10]}, skipped", file=sys.stderr)
                 summary[cat.name] = {"prs": len(items), "skipped": True}
                 continue
@@ -132,7 +132,7 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | N
         d.mkdir(parents=True, exist_ok=True)
         stamp = _now()
         payload = {"category": cat.name, "created": stamp, "model": model, "effort": effort,
-                   "inputs": sorted(n for n, _ in items), "dossier_hashes": {str(n): dossiers[n]["input_hash"] for n, _ in items},
+                   "inputs": sorted(n for n, _ in items), "dossier_hashes": {str(n): dossier_stem(dossiers[n]) for n, _ in items},
                    "usage": usage_dict(msg.usage), "cost_usd": cost, "stop_reason": msg.stop_reason, "result": parsed}
         fname = stamp.replace(":", "").replace("+00:00", "Z")
         with open(d / f"{fname}.json", "w") as f:

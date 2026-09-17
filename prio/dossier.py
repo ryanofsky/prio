@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -317,17 +318,31 @@ def load_extract(extract_dir: Path, only: set[int] | None) -> dict[int, dict]:
     return recs
 
 
-def have_dossier(out_dir: Path, n: int, h: str) -> bool:
-    return (out_dir / str(n) / f"{h}.json").exists()
+def model_slug(model: str) -> str:
+    return re.sub(r"[^A-Za-z0-9.]+", "-", model).strip("-")
 
 
-def store(out_dir: Path, n: int, h: str, payload: dict) -> Path:
+def stem_for(h: str, model: str) -> str:
+    """File stem of a stored output: input hash plus model, so assessments of
+    the same input by different models coexist and 'latest' picks one."""
+    return f"{h}-{model_slug(model)}"
+
+
+def dossier_stem(d: dict) -> str:
+    return stem_for(d["input_hash"], d.get("model") or "")
+
+
+def have_dossier(out_dir: Path, n: int, h: str, model: str) -> bool:
+    return (out_dir / str(n) / f"{stem_for(h, model)}.json").exists()
+
+
+def store(out_dir: Path, n: int, stem: str, payload: dict) -> Path:
     d = out_dir / str(n)
     d.mkdir(parents=True, exist_ok=True)
-    p = d / f"{h}.json"
+    p = d / f"{stem}.json"
     with open(p, "w") as f:
         json.dump(payload, f, indent=1)
-    (d / "latest").write_text(h + "\n")
+    (d / "latest").write_text(stem + "\n")
     return p
 
 
@@ -381,7 +396,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     cats = load_categories(cfg.categories_dir)
     system = build_system(cfg, cats)
     recs = load_extract(extract_dir, only)
-    todo = {n: r for n, r in recs.items() if force or not have_dossier(out_dir, n, r["input_hash"])}
+    todo = {n: r for n, r in recs.items() if force or not have_dossier(out_dir, n, r["input_hash"], model)}
     print(f"{len(recs)} PRs loaded, {len(todo)} need a dossier", file=sys.stderr)
     if not todo:
         return {"submitted": 0}
@@ -429,7 +444,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
                 continue
             n, r, msg = res
             payload = _result_payload(n, r["input_hash"], model, False, msg)
-            p = store(out_dir, n, r["input_hash"], payload)
+            p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} in={payload['usage']['input_tokens']} out={payload['usage']['output_tokens']} ${(payload['cost_usd'] or 0):.4f}"
                   + (f" ERROR {payload['error']}" if payload["error"] else ""), file=sys.stderr)
@@ -448,7 +463,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
             params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
             msg = client.messages.create(**params)
             payload = _result_payload(n, r["input_hash"], model, False, msg)
-            p = store(out_dir, n, r["input_hash"], payload)
+            p = store(out_dir, n, dossier_stem(payload), payload)
             total += payload["cost_usd"] or 0
             print(f"  #{n}: {payload['stop_reason']} {payload['usage']} ${payload['cost_usd']:.4f} -> {p}", file=sys.stderr)
         print(f"total ${total:.4f}", file=sys.stderr)
@@ -540,8 +555,9 @@ def cmd_collect(out_dir: Path, batch_id: str | None, wait: bool) -> dict:
             if not m:
                 continue
             if res.result.type == "succeeded":
-                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message, {"batch_id": bid})
-                store(out_dir, m["number"], m["input_hash"], payload)
+                payload = _result_payload(m["number"], m["input_hash"], meta["model"], True, res.result.message,
+                                          {"batch_id": bid, **({"stage": "display", "dossier": m["dossier"]} if m.get("stem") else {})})
+                store(out_dir, m["number"], m.get("stem") or dossier_stem(payload), payload)
                 total += payload["cost_usd"] or 0
                 ok += 1
                 print(f"  #{m['number']}: {payload['stop_reason']} {payload['usage']} ${payload['cost_usd']:.4f}" + (f" ERROR {payload['error']}" if payload['error'] else ""), file=sys.stderr)
