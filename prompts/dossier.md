@@ -68,9 +68,7 @@ Rules:
   Agreement state from these lists and checks them against the thread
   (a resolved objection without resolution evidence is treated as open;
   an author reply counts only if the author actually commented after
-  the objection; a safety or correctness objection from a reviewer who
-  is against the PR is blocking; a participant you skip is recorded as
-  a gap), so the accuracy of the lists is what matters; your own `state`
+  the objection; a participant you skip is recorded as a gap), so the accuracy of the lists is what matters; your own `state`
   is recorded next to the derived one. The scale is biased toward the
   positive end: silence is consent, and a PR not everybody likes can
   still merge. Rules that models get wrong, in both directions:
