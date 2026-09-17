@@ -49,9 +49,15 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
     body = {
         "model": model[len(PREFIX):],
         "messages": [{"role": "system", "content": sys_text}, {"role": "user", "content": user}],
-        "max_tokens": max_tokens,
+        # Reasoning models spend their output budget thinking before the JSON;
+        # give them room (the answer itself is ~1k tokens) and, if asked, a
+        # reasoning effort cap: PRIO_OPENROUTER_REASONING=low|medium|high.
+        "max_tokens": max(max_tokens, int(os.environ.get("PRIO_OPENROUTER_MAX_TOKENS", "32000"))),
         "usage": {"include": True},
     }
+    effort = os.environ.get("PRIO_OPENROUTER_REASONING")
+    if effort:
+        body["reasoning"] = {"effort": effort}
     if schema:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "result", "strict": True, "schema": schema}}
     data = json.dumps(body).encode()
