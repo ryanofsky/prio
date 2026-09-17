@@ -51,17 +51,19 @@ a { color: var(--link); text-decoration: none; } a:hover { text-decoration: unde
 h1 { font-size: 1.4rem; margin: .5rem 0 .25rem; } .sub { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; }
 .banner { background:#fff8e1; border:1px solid #f0d78c; padding:.5rem .5rem; font-size:.85rem; margin: 1rem 0 0; }
 nav.cats a { margin-right: 1rem; }
-table { border-collapse: collapse; width: 100%; font-size: .9rem; background: #fff; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; background: #fff; table-layout: fixed; }
+col.c-pr { width: 42%; } col.c-prio { width: 13%; } col.c-rev { width: 13%; } col.c-reviews { width: 8%; } col.c-agree { width: 13%; } col.c-size { width: 11%; }
+td { overflow-wrap: anywhere; }
 th, td { border: 1px solid var(--border); padding: .35rem .5rem; vertical-align: top; text-align: left; }
 th { background: #f0f0f0; position: sticky; top: 0; }
 td .brief { display: block; }
 td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; }
 tr.open td .detail { display: block; }
 td .brief { cursor: pointer; }
-td.pr { min-width: 22rem; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
+td.pr .title { overflow-wrap: anywhere; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
 td.prio { white-space: nowrap; } td.prio .brief { font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
 td .detail { font-weight: 400; }
-td.rev, td.agree, td.size, td.reviews { white-space: nowrap; }
+td.reviews .brief, td.size .brief { white-space: nowrap; }
 td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-style: italic; color: #555; }
 .detail ul { margin: 0; padding-left: 1.1rem; } .detail li { margin: .15rem 0; }
 .detail .k { color: var(--muted); }
@@ -461,7 +463,8 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
     for name, rows in sorted(members.items()):
         cat = cats.get(name)
         title = cat.title if cat else name
-        head = ('<table><thead><tr><th>PR</th><th>Priority</th><th>Reviewability</th><th>Reviews</th>'
+        head = ('<table><colgroup><col class="c-pr"><col class="c-prio"><col class="c-rev"><col class="c-reviews"><col class="c-agree"><col class="c-size"></colgroup>'
+                '<thead><tr><th>PR</th><th>Priority</th><th>Reviewability</th><th>Reviews</th>'
                 '<th>Agreement</th><th>Size</th></tr></thead><tbody>')
         body_rows = "".join(_row(recs[n], dossiers[n], c, name, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
         covers = (f'<div class="covers"><div class="src">Category definition: <a href="{_e(cat_src(name))}">{_e(repo_short)}/categories/{_e(name)}.md</a>'
