@@ -44,9 +44,17 @@ Resolved:
 
 Not resolved:
 
-- The author proposes a fix and has not implemented it.
+- The author proposes a fix, or agrees in principle, and has not
+  implemented it.
 - The author asks the critic a question and the critic has not answered.
 - The author has not responded at all.
+- Another reviewer approved; approval by someone else does not answer an
+  objection.
+
+The state is set by the hardest objection still open. A rejection
+stated without the word NACK ("this cannot be merged", "I don't think
+this should go in") is still a rejection, and from a maintainer it is
+blocking.
 
 When a resolved criticism was the only thing holding the PR at Mild or
 Disputed, the state returns to Positive, Strong, or Neutral as
