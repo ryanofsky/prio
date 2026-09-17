@@ -361,7 +361,46 @@ def load_rank(rank_dir: Path | None, cat_name: str) -> dict | None:
         payload = json.load(f)
     res = payload.get("result") or {}
     return {"by": {e["number"]: e for e in res.get("ranking", [])}, "inconsistencies": res.get("inconsistencies", []),
-            "notes": res.get("notes", ""), "created": payload.get("created"), "model": payload.get("model")}
+            "notes": res.get("notes", ""), "created": payload.get("created"), "model": payload.get("model"),
+            "dossier_hashes": payload.get("dossier_hashes") or {}}
+
+
+BAND_ORDER = {"P1": 1, "P2": 2, "P3": 3, "P4": 4, "Unranked": 5}
+
+
+def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
+    """Combine a category's ranking pass with newer dossiers.
+
+    A ranking entry applies only while the dossier it saw is unchanged (same
+    input hash). Ranked PRs keep the pass's band and relative order. A PR
+    the pass did not see, or whose dossier changed since, uses its own band
+    and is slotted among the ranked PRs of that band by score. Result: a
+    stable weekly order with daily arrivals interleaved, never dumped at the
+    bottom."""
+    by, hashes = rk["by"], rk["dossier_hashes"]
+    ranked, fresh = [], []
+    for score, n, c in rows:
+        e = by.get(n)
+        if e and hashes.get(str(n)) == dossiers[n].get("input_hash"):
+            c = dict(c, rank_note=e["note"])
+            if e["band"] != c["band"]:
+                c.update(rank_band=e["band"], dossier_band=c["band"])
+            ranked.append((e["position"], score, n, c))
+        else:
+            fresh.append((score, n, c))
+    ranked.sort()
+    out: list = []
+    for band in ("P1", "P2", "P3", "P4", "Unranked"):
+        band_ranked = [(sc, n, c) for _, sc, n, c in ranked if (c.get("rank_band") or c["band"]) == band]
+        band_fresh = sorted([(sc, n, c) for sc, n, c in fresh if c["band"] == band], key=lambda x: -x[0])
+        merged: list = []
+        for item in band_ranked:
+            while band_fresh and band_fresh[0][0] > item[0]:
+                merged.append(band_fresh.pop(0))
+            merged.append(item)
+        merged.extend(band_fresh)
+        out.extend(merged)
+    return out
 
 
 def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None,
@@ -399,17 +438,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         if not rk:
             continue
         rank_info[name] = rk
-        by = rk["by"]
-        for i, (score, n, c) in enumerate(rows):
-            e = by.get(n)
-            if not e:
-                continue
-            if e["band"] != c["band"]:
-                c = dict(c, rank_band=e["band"], dossier_band=c["band"], rank_note=e["note"])
-            else:
-                c = dict(c, rank_note=e["note"])
-            rows[i] = (score, n, c)
-        rows.sort(key=lambda x: (by.get(x[1], {}).get("position", 10**6), -x[0]))
+        members[name] = merge_rank(rows, rk, dossiers)
     ranks: dict[int, dict[str, tuple[int, int]]] = {}
     for name, rows in members.items():
         for i, (_, n, _c) in enumerate(rows, 1):

@@ -70,15 +70,34 @@ let
     prio display submit --extract "$D/extract" --dossier "$D/dossier" --out "$D/display" --model ${cfg.displayModel}
     prio display collect --out "$D/display" --wait
 
-    # --- site
+    # --- site (rank output, if any, from the weekly prio-rank service)
     log "render"
-    prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --out "$D/site.new"
+    prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
     rsync -a --delete "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     log "done"
+  '';
+  rankScript = pkgs.writeShellScript "prio-rank" ''
+    set -euo pipefail
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.rsync pkgs.cacert ]}:$PATH"
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export HOME=${cfg.dataDir}
+    D=${cfg.dataDir}
+    export PYTHONPATH="$D/src/engine"
+    export ANTHROPIC_API_KEY="$(cat ${cfg.apiKeyFile})"
+    prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
+    echo "[$(date -u +%FT%TZ)] rank (only categories changed since last pass)"
+    prio rank --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --out "$D/rank" --model ${cfg.rankModel} --effort ${cfg.rankEffort}
+    echo "[$(date -u +%FT%TZ)] render"
+    prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
+    rsync -a --delete "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
+    echo "[$(date -u +%FT%TZ)] done"
   '';
 in
 {
   options.services.prio = {
+    rankModel = lib.mkOption { type = lib.types.str; default = "claude-opus-5"; };
+    rankEffort = lib.mkOption { type = lib.types.str; default = "high"; };
+    rankOnCalendar = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "weekly ranking pass schedule, e.g. \"Sun *-*-* 03:00:00\"; null disables"; };
     enable = lib.mkEnableOption "the prio review-priority pipeline";
     dataDir = lib.mkOption { type = lib.types.str; default = "/var/lib/prio"; };
     siteDir = lib.mkOption { type = lib.types.str; default = "/var/lib/prio/site"; description = "where the rendered site goes (nginx root)"; };
@@ -123,6 +142,18 @@ in
       description = "daily prio pipeline";
       wantedBy = [ "timers.target" ];
       timerConfig = { OnCalendar = cfg.onCalendar; Persistent = true; RandomizedDelaySec = "10m"; };
+    };
+    systemd.services.prio-rank = lib.mkIf (cfg.rankOnCalendar != null) {
+      description = "prio ranking pass: compare all PRs in each changed category";
+      after = [ "network-online.target" "prio.service" ];
+      wants = [ "network-online.target" ];
+      unitConfig.ConditionPathExists = cfg.apiKeyFile;
+      serviceConfig = { Type = "oneshot"; User = cfg.user; Group = cfg.user; ExecStart = rankScript; TimeoutStartSec = "3h"; Nice = 10; };
+    };
+    systemd.timers.prio-rank = lib.mkIf (cfg.rankOnCalendar != null) {
+      description = "weekly prio ranking pass";
+      wantedBy = [ "timers.target" ];
+      timerConfig = { OnCalendar = cfg.rankOnCalendar; Persistent = true; RandomizedDelaySec = "10m"; };
     };
   };
 }

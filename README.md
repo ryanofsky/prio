@@ -29,7 +29,8 @@ engine never calls the GitHub API for PR content.
 |-------|---------|--------|--------|
 | extract | `prio extract` | no | `prs/<n>.json`, `index.json`: metadata, ACK table, staleness signals, stack edges, linked issues, discussion text |
 | dossier | (not yet) | yes, per PR when its input changes | summary, discussion state, reviewability, agreement, per-category factor scores |
-| rank | (not yet) | yes, per category, weekly | bands and order within each category |
+| display | `prio display` | yes, per dossier, small | short table lines (goal, why, review state, agreement) |
+| rank | `prio rank` | yes, per category, on demand or weekly | bands checked against each other, order, review-chain notes |
 | merge | (not yet) | no | site data |
 | render | (not yet) | no | static HTML |
 
@@ -93,6 +94,32 @@ process loses nothing; rerun `collect` later. Results stay available for
 the model, token usage, and a cost estimate; `DOSSIER/<n>/latest` names
 the current one. Batch manifests under `DOSSIER/batches/` record what was
 sent and, after collection, what it cost.
+
+### Rank
+
+```
+prio rank --extract EXTRACT --dossier DOSSIER --display DISPLAY --out RANK [--category ipc] [--model claude-opus-5] [--dry-run] [--force]
+prio render ... --rank RANK
+```
+
+One call per category with every member PR's card. Skips a category
+whose members and dossiers are unchanged since its last ranking.
+
+**How ranking combines with daily assessments.** Dossiers give each PR a
+band and a score judged alone. A ranking pass gives the PRs of one
+category consistent bands and an order judged together. The renderer
+merges them per category:
+
+- A ranking entry applies only while the dossier it saw is unchanged
+  (the ranking file records each dossier's input hash).
+- Ranked PRs keep the pass's band and relative order.
+- A PR the pass did not see, or whose dossier changed since, uses its
+  own band and is slotted among the ranked PRs of that band by score.
+
+So the order is stable between passes and daily arrivals are interleaved
+rather than appended. A band the pass changed is shown with its reason in
+the priority cell; the pass's notes on review order and overlapping PRs
+are on `rank/<category>.html`, linked from the legend.
 
 ### Report
 
