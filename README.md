@@ -51,6 +51,11 @@ prio --config ../prio-bitcoin extract \
 
 Writes `prs/<n>.json` and `index.json`. Fast (seconds), no model.
 
+Pass `--refs-index FILE` so numbers mentioned in PRs resolve to a type,
+state, merge date, and title. Build the file from a full backup with
+`scripts/refs-index.sh BACKUP_DIR > refs-index.tsv` (one awk pass, seconds
+for 35k files).
+
 ### Dossier
 
 Credentials: `ANTHROPIC_API_KEY` in the environment, or a key in
