@@ -17,7 +17,7 @@ let
   py = pkgs.python3;
   runScript = pkgs.writeShellScript "prio-run" ''
     set -euo pipefail
-    export PATH="${lib.makeBinPath [ pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.jq py pkgs.rsync pkgs.cacert ]}:$PATH"
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert ]}:$PATH"
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     export HOME=${cfg.dataDir}
     D=${cfg.dataDir}
@@ -43,8 +43,10 @@ let
     # --- data
     ${lib.optionalString (cfg.projectRepo != null) ''
       log "git sidecar"
-      prio git --repo "$D/bitcoin.git" --url ${lib.escapeShellArg cfg.projectRepo} \
-        --extract "$D/extract" --out "$D/git" --budget-chars ${toString cfg.patchChars} >/dev/null 2>"$D/git.log" || true
+      if ! prio git --repo "$D/bitcoin.git" --url ${lib.escapeShellArg cfg.projectRepo} \
+          --extract "$D/extract" --out "$D/git" --budget-chars ${toString cfg.patchChars} >/dev/null 2>"$D/git.log"; then
+        log "WARNING: git sidecar failed; continuing without diffs. Last lines of git.log:"; tail -5 "$D/git.log"
+      fi
     ''}
     log "refs index"
     bash "$D/src/engine/scripts/refs-index.sh" ${lib.escapeShellArg cfg.backupDir} > "$D/refs-index.tsv"
@@ -54,7 +56,8 @@ let
     ${lib.optionalString (cfg.projectRepo != null) ''
       # second sidecar pass now that extract knows the current heads (first pass may predate a new PR)
       prio git --repo "$D/bitcoin.git" --url ${lib.escapeShellArg cfg.projectRepo} \
-        --extract "$D/extract" --out "$D/git" --budget-chars ${toString cfg.patchChars} >/dev/null 2>>"$D/git.log" || true
+        --extract "$D/extract" --out "$D/git" --budget-chars ${toString cfg.patchChars} >/dev/null 2>>"$D/git.log" \
+        || { log "WARNING: second sidecar pass failed"; tail -3 "$D/git.log"; }
       prio extract --backup ${lib.escapeShellArg cfg.backupDir} --out "$D/extract" --refs-index "$D/refs-index.tsv" --git "$D/git"
     ''}
 
