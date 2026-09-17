@@ -445,11 +445,26 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
                       'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
         rk = rank_info.get(name)
         rank_block = ""
-        if rk and (rk["inconsistencies"] or rk["notes"]):
-            rank_block = ('<div class="covers"><h2>Notes from the ranking pass</h2>'
-                          + (f'<p>{_t(rk["notes"])}</p>' if rk["notes"] else "") + _ul(rk["inconsistencies"])
-                          + f'<p class="src">Ranking pass by {_e(rk["model"])} on {_e((rk["created"] or "")[:10])}, comparing all PRs in this category at once.</p></div>')
-        body = (head + body_rows + "</tbody></table>" + legend + covers + rank_block
+        rank_line = ""
+        if rk:
+            changes = [(n, c) for _, n, c in rows if c.get("rank_band") or c.get("rank_note")]
+            notes_html = ('<div class="prpage">'
+                          + (f'<h2>Category notes</h2><div class="box"><p>{_t(rk["notes"])}</p></div>' if rk["notes"] else "")
+                          + (f'<h2>Review order and overlapping PRs</h2><div class="box">{_ul(rk["inconsistencies"])}</div>' if rk["inconsistencies"] else "")
+                          + (f'<h2>Band and position changes</h2><div class="box">' + _ul(
+                                (f'#{n}: {c["dossier_band"]} alone, {c["rank_band"]} after comparison. {c["rank_note"]}' if c.get("rank_band")
+                                 else f'#{n}: {c["rank_note"]}') for n, c in changes) + '</div>' if changes else "")
+                          + f'<h2>About</h2><div class="box"><p>This pass by {_e(rk["model"])} on {_e((rk["created"] or "")[:10])} saw every PR in the category at once and '
+                            'checked the bands given to each PR alone against each other, ordered the PRs, and noted chains and overlaps. '
+                            f'<a href="../{_e(name)}.html">Back to the category</a>.</p></div></div>')
+            (out_dir / "rank").mkdir(exist_ok=True)
+            (out_dir / "rank" / f"{name}.html").write_text(_page(f"{title}: ranking notes", notes_html,
+                                                               nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
+            n_notes = len(rk["inconsistencies"]) + len(changes)
+            rank_line = (f'<div>Ranking pass ({_e((rk["created"] or "")[:10])}): all PRs here were compared with each other; '
+                         f'<a href="rank/{_e(name)}.html">{n_notes} notes on review order, overlaps, and band changes</a>.</div>')
+        legend_here = legend.replace("</div></div>", f"</div>{rank_line}</div>") if rank_line else legend
+        body = (head + body_rows + "</tbody></table>" + legend_here + covers
                 + f'<div class="foot">{callout}<div class="sub" title="{len(rows)} PRs in this category, {len(dossiers)} assessed in total">generated {stamp}</div></div>')
         h1 = f'<a href="{_e(cat_src(name))}">{_e(title)}</a>'
         (out_dir / f"{name}.html").write_text(_page(f"{title}: {cfg.site_title}", body, nav=nav, h1=h1))

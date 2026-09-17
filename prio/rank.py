@@ -35,7 +35,7 @@ SCHEMA = {
                 "number": {"type": "integer"},
                 "band": {"type": "string", "enum": ["P1", "P2", "P3", "P4", "Unranked"]},
                 "position": {"type": "integer", "description": "1 = most worth reviewing in this category"},
-                "note": {"type": "string", "description": "one line; why the band changed, or empty"},
+                "note": {"type": "string", "description": "one line: why the band changed, or why the position differs by five or more from its position by score; empty otherwise"},
             },
         }},
         "inconsistencies": {"type": "array", "items": {"type": "string"}},
@@ -54,6 +54,13 @@ def build_system(cat) -> list[dict]:
 
 def cards(cat_name: str, recs: dict, dossiers: dict, displays: dict) -> list[tuple[int, str]]:
     out = []
+    scored = []
+    for n, d in dossiers.items():
+        r = d.get("result")
+        c = r and next((c for c in r["categories"] if c["name"] == cat_name and c["member"]), None)
+        if c and n in recs:
+            scored.append((-(c["score"] or 0), n))
+    alone_pos = {n: i + 1 for i, (_, n) in enumerate(sorted(scored))}
     for n, d in dossiers.items():
         r = d.get("result")
         if not r or n not in recs:
@@ -65,7 +72,8 @@ def cards(cat_name: str, recs: dict, dossiers: dict, displays: dict) -> list[tup
         why = next((x["why"] for x in disp.get("categories", []) if x.get("name") == cat_name), [])
         goal = disp.get("goal") or []
         text = (f"#{n} {recs[n]['title']} (by {recs[n]['author']})\n"
-                f"Assessed alone: {c['band']}" + (f" · {c.get('reason_tag')}" if c.get("reason_tag") else "") + "\n"
+                f"Assessed alone: {c['band']}" + (f" · {c.get('reason_tag')}" if c.get("reason_tag") else "")
+                + f", position {alone_pos.get(n, '?')} of {len(alone_pos)} by its score\n"
                 + ("Goal: " + " ".join(goal) + "\n" if goal else "")
                 + ("Why: " + " ".join(why) + "\n" if why else "")
                 + "Card: " + r["card"])
@@ -84,7 +92,7 @@ def _now() -> str:
 
 
 def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | None, out_dir: Path,
-        only: set[str] | None, model: str, effort: str, dry_run: bool) -> dict:
+        only: set[str] | None, model: str, effort: str, dry_run: bool, force: bool = False) -> dict:
     from .render import load_display
     cats = [c for c in load_categories(cfg.categories_dir) if not only or c.name in only]
     dossiers = load_latest(dossier_dir)
@@ -97,6 +105,15 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | N
         items = cards(cat.name, recs, dossiers, displays)
         if not items:
             continue
+        # Skip a category whose members and dossiers are unchanged since its last ranking.
+        latest = out_dir / cat.name / "latest"
+        if latest.exists() and not force:
+            with open(out_dir / cat.name / f"{latest.read_text().strip()}.json") as f:
+                prev = json.load(f)
+            if prev.get("dossier_hashes") == {str(n): dossiers[n]["input_hash"] for n, _ in items}:
+                print(f"  {cat.name}: unchanged since {prev.get('created', '')[:10]}, skipped", file=sys.stderr)
+                summary[cat.name] = {"prs": len(items), "skipped": True}
+                continue
         system = build_system(cat)
         user = build_user(cat, items)
         if dry_run:

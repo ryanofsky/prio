@@ -97,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     rk.add_argument("--model", default="claude-opus-5")
     rk.add_argument("--effort", default="high")
     rk.add_argument("--dry-run", action="store_true")
+    rk.add_argument("--force", action="store_true", help="re-rank even if nothing changed since the last ranking")
 
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import rank
 
         only = set(args.category) if args.category else None
-        res = rank.run(cfg, args.extract, args.dossier, args.display, args.out, only, args.model, args.effort, args.dry_run)
+        res = rank.run(cfg, args.extract, args.dossier, args.display, args.out, only, args.model, args.effort, args.dry_run, args.force)
     elif args.cmd == "render":
         from . import render
 

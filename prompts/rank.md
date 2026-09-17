@@ -19,7 +19,9 @@ Your job:
 2. Order the PRs from most to least worth a reviewer's time in this
    category, giving each a position from 1 to N. Within a band, put the
    PR with the larger or more certain benefit first.
-3. For each PR whose band you changed, say why in one line.
+3. For each PR whose band you changed, say why in one line. Also say
+   why, in one line, for any PR you place five or more positions away
+   from where its own score put it (each card states that position).
 4. List inconsistencies you noticed that the ordering alone does not
    express: two PRs solving the same problem (say which should be
    reviewed first), a PR that duplicates merged work, a chain whose
