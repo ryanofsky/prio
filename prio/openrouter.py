@@ -95,12 +95,18 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
                            model=out.get("model"), provider=(out.get("provider") or ""))
 
 
-def run_many(jobs: list, fn, workers: int = 4) -> list:
-    """Run fn(job) over jobs with a thread pool, preserving order; exceptions are returned in place."""
+def run_many(jobs: list, fn, workers: int | None = None):
+    """Run fn(job) over jobs with a thread pool, yielding results as they
+    complete (not in order), so progress is visible; exceptions are yielded
+    in place. Workers default to $PRIO_OPENROUTER_WORKERS or 4."""
+    from concurrent.futures import as_completed
+    workers = workers or int(os.environ.get("PRIO_OPENROUTER_WORKERS", "4"))
     def safe(j):
         try:
             return fn(j)
         except Exception as e:  # keep going; the caller records the failure
             return e
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        return list(ex.map(safe, jobs))
+        futures = [ex.submit(safe, j) for j in jobs]
+        for f in as_completed(futures):
+            yield f.result()
