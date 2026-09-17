@@ -24,7 +24,7 @@ by who they are.
 | **Neutral** | Nobody has spoken for the PR, and a nonblocking criticism was raised and then resolved. |
 | **Positive** | The default once anyone has substantively commented and there is no unresolved criticism. One "looks good" without much substance is enough. |
 | **Strong** | At least one reviewer wants the PR for a specific stated reason, and nobody objects. Others merely affirming keeps it Strong. |
-| **Positive w/ caveats** | Someone says the change is a net negative for stated reasons but explicitly will not oppose it if others want it. |
+| **Positive w/ caveats** | Support with a standing, acknowledged drawback: someone says the change is a net negative for stated reasons but will not oppose it if others want it, or a criticism was resolved by agreeing to disagree rather than by a fix, so the harm remains valid and the PR can still move forward. |
 | **Mild** | A criticism pointing at a real harm the PR would cause if merged is unresolved, and the critic treats it as nonblocking. Also the state when nobody has spoken for the PR and such a criticism is open. |
 | **Disputed** | An unresolved criticism that the critic treats as blocking, with the author engaging. |
 | **Blocked** | A blocking criticism the author has not responded to. Temporary: a PR moves between Disputed and Blocked as the author answers, and eventually merges with objections fixed or accepted, or closes. |
@@ -50,7 +50,9 @@ Not resolved:
 
 When a resolved criticism was the only thing holding the PR at Mild or
 Disputed, the state returns to Positive, Strong, or Neutral as
-appropriate. If the critic is unsatisfied with the answer and decides the
+appropriate; if it was resolved by agreeing to disagree rather than by a
+fix, the state is Positive w/ caveats, and the detail names the standing
+drawback. If the critic is unsatisfied with the answer and decides the
 PR should not merge, Mild becomes Disputed.
 
 ## Other rules
