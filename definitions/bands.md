@@ -32,7 +32,13 @@ confidence in the assessment. Shown last, with the reason.
 There is no P0. Release urgency and public security severity are separate
 flags, not a band, so that importance and immediacy are not confused.
 
-Alongside the band, each assessment carries a score in [0, 1] consistent
-with it (P1 ≈ 0.75–1, P2 ≈ 0.5–0.75, P3 ≈ 0.25–0.5, P4 ≈ 0–0.25). The
-score orders PRs within a band and shades the table; the band is what the
-words above define.
+## What goes with the band
+
+- A **score** in [0, 1] consistent with the band (P1 0.75–1, P2 0.5–0.75,
+  P3 0.25–0.5, P4 0–0.25). It orders PRs within a band and shades the
+  table cell; it is never shown as a number.
+- A **reason tag** of one or two words saying why the band applies, shown
+  next to it in the cell: "bug fix", "fund safety", "DoS protection",
+  "speedup", "new feature", "unblocks #N", "user request", "cleanup",
+  "test coverage", "platform fix". Pick the single strongest reason.
+- A **rationale** citing the evidence, shown on expand.

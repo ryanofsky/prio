@@ -25,6 +25,11 @@ Rules:
 - Do not let size, activity, ACK count, CI state, draft status, or
   mergeability move priority in either direction. They have their own
   fields.
+- Maintainers' area labels (Validation, Wallet, IPC, Mining, ...) are a
+  strong prior for membership: a labeled PR is a member of the matching
+  category unless the category file excludes it, and a PR without a
+  category's label needs clear evidence to be one. Labels say nothing
+  about priority.
 - Membership is inclusive. A PR belongs to every category whose area it
   touches or affects. It may be P1 in one category and P4 in another; say
   so rather than forcing one home. "Touches" means it changes the area's
@@ -52,4 +57,10 @@ Rules:
   problem it solves and for whom, the strongest evidence of importance,
   the current review state, and any dependency. Write it so a reviewer who
   reads only the card can judge relative importance against other cards.
+- Table cells are small. The reviewability `label` is at most four words
+  and names the specific thing ("Review #35675 first", "CI failing"), the
+  agreement `summary` is one line naming who raised what and its status,
+  and each category's `reason_tag` is one or two words for why the band
+  applies. Full reasoning goes in the `reason` and `rationale` fields,
+  which readers see on expand.
 - Be concrete and brief. No hedging phrases, no restating the rules.

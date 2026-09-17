@@ -30,6 +30,7 @@ ENGINE_ROOT = Path(__file__).resolve().parent.parent
 DEFINITIONS = ["priority.md", "bands.md", "reviewability.md", "agreement.md"]
 
 BANDS = ["P1", "P2", "P3", "P4", "Unranked"]
+AGREEMENT_STATES = ["Crickets", "Neutral", "Positive", "Strong", "Positive w/ caveats", "Mild", "Disputed", "Blocked"]
 FACTORS = ["security_stability", "bug_severity", "performance", "user_value", "leverage"]
 
 SCHEMA = {
@@ -54,15 +55,16 @@ SCHEMA = {
             "required": ["state", "label", "reason"],
             "properties": {
                 "state": {"type": "string", "enum": ["Ready", "Stale", "Paused"]},
-                "label": {"type": "string", "description": "Short phrase for the table cell, e.g. Ready, Needs rebase, Waiting on author"},
+                "label": {"type": "string", "description": "Table cell label, at most four words, specific: Ready | Needs rebase | CI failing | Review #N first | Waiting on author | Author reworking"},
                 "reason": {"type": "string"},
             },
         },
         "agreement": {
             "type": "object", "additionalProperties": False,
-            "required": ["state", "reason", "evidence"],
+            "required": ["state", "summary", "reason", "evidence"],
             "properties": {
-                "state": {"type": "string", "enum": ["Strong", "Mild", "Disputed", "Blocked", "Crickets"]},
+                "state": {"type": "string", "enum": AGREEMENT_STATES},
+                "summary": {"type": "string", "description": "One line for the table cell detail, e.g. 'Positive, but ajtowns thinks the option name is a footgun; author disagrees'"},
                 "reason": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}, "description": "who said what, briefly"},
             },
@@ -79,12 +81,13 @@ SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["name", "member", "evidence", "band", "score", "factors", "rationale"],
+                "required": ["name", "member", "evidence", "band", "reason_tag", "score", "factors", "rationale"],
                 "properties": {
                     "name": {"type": "string"},
                     "member": {"type": "boolean"},
                     "evidence": {"type": "string", "description": "why it is or is not in this category"},
                     "band": {"type": "string", "enum": BANDS},
+                    "reason_tag": {"type": "string", "description": "one or two words for the cell: bug fix | fund safety | DoS protection | speedup | new feature | unblocks #N | user request | cleanup | test coverage | platform fix | decision needed; empty if not a member"},
                     "score": {"type": "number", "description": "0 to 1, consistent with band: P1 0.75-1, P2 0.5-0.75, P3 0.25-0.5, P4 0-0.25, Unranked 0"},
                     "factors": {
                         "type": "object", "additionalProperties": False,
@@ -163,7 +166,27 @@ def _truncate_timeline(entries: list[str], budget_chars: int) -> list[str]:
     return head + [f"[... {omitted} earlier events omitted for length ...]"] + tail
 
 
-def build_user(rec: dict, cats: list[Category], budget_tokens: int) -> str:
+def load_patch(git_dir: Path | None, n: int, patch_chars: int) -> tuple[str, list[dict], bool]:
+    """Return (patch text, files, truncated) from the git sidecar, cutting the
+    patch at ``patch_chars``. The sidecar orders the patch smallest-file-first,
+    so cutting the tail drops the largest files."""
+    if not git_dir:
+        return "", [], False
+    p = git_dir / f"{n}.json"
+    if not p.exists():
+        return "", [], False
+    with open(p) as f:
+        g = json.load(f)
+    patch = g["patch"]
+    truncated = g["patch_truncated"]
+    if len(patch) > patch_chars:
+        cut = patch.rfind("\ndiff --git ", 0, patch_chars)
+        patch = patch[:cut if cut > 0 else patch_chars]
+        truncated = True
+    return patch, g["files"], truncated
+
+
+def build_user(rec: dict, cats: list[Category], budget_tokens: int, git_dir: Path | None = None, patch_chars: int = 80000) -> str:
     db = rec.get("bot", {}).get("drahtbot", {})
     reviews = db.get("reviews", {})
     ack_table = ", ".join(f"{k}: {', '.join(r['login'] for r in v)}" for k, v in reviews.items() if v) or "none"
@@ -201,6 +224,17 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int) -> str:
     hints = {k: {kk: vv for kk, vv in v.items() if vv} for k, v in hints.items()}
 
     commits = "\n\n".join(f"{c['sha'][:10]} {c['message']}" for c in rec["commits"])
+    patch, files, patch_truncated = load_patch(git_dir, rec["number"], patch_chars)
+    if files:
+        file_list = "\n".join(f"{f['path']}  +{f['add']}/-{f['del']}" for f in files)
+        if rec.get("test_lines") is not None:
+            file_list += f"\n\n(test/bench/ci lines: {rec['test_lines']})"
+    else:
+        file_list = "(not available)"
+    patch_block = ""
+    if patch:
+        note = " Largest files omitted for length; see the file list for their stats." if patch_truncated else ""
+        patch_block = f"<patch>\n{patch}\n</patch>\n(Diff from merge base to head, smallest files first.{note})\n\n"
     entries = [_fmt_event(e) for e in rec["timeline"]]
     fixed = len(rec["body"]) + len(commits) + 3000
     # ~3.2 chars/token on discussion text with code and links (measured)
@@ -216,6 +250,8 @@ def build_user(rec: dict, cats: list[Category], budget_tokens: int) -> str:
         f"<category_hints>\n{json.dumps(hints, indent=1)}\n</category_hints>\n\n"
         f"<description>\n{rec['body'] or '(empty)'}\n</description>\n\n"
         f"<commits>\n{commits or '(none)'}\n</commits>\n\n"
+        f"<files>\n{file_list}\n</files>\n\n"
+        f"{patch_block}"
         f"<discussion>\n{discussion}\n</discussion>\n\n"
         f"Categories to assess: {', '.join(c.name for c in cats)}."
     )
@@ -294,7 +330,8 @@ def _client():
 
 
 def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | None, model: str,
-               effort: str, budget_tokens: int, max_tokens: int, dry_run: bool, sync: bool, force: bool) -> dict:
+               effort: str, budget_tokens: int, max_tokens: int, dry_run: bool, sync: bool, force: bool,
+               git_dir: Path | None = None, patch_chars: int = 80000) -> dict:
     cats = load_categories(cfg.categories_dir)
     system = build_system(cfg, cats)
     recs = load_extract(extract_dir, only)
@@ -306,12 +343,12 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     if dry_run:
         client = _client()
         n0 = next(iter(todo))
-        u0 = build_user(todo[n0], cats, budget_tokens)
+        u0 = build_user(todo[n0], cats, budget_tokens, git_dir, patch_chars)
         sys_tokens = client.messages.count_tokens(model=model, system=system, messages=[{"role": "user", "content": "x"}]).input_tokens
         print(f"system prompt: ~{sys_tokens} tokens (cached after first request)", file=sys.stderr)
         total_user = 0
         for n, r in todo.items():
-            u = build_user(r, cats, budget_tokens)
+            u = build_user(r, cats, budget_tokens, git_dir, patch_chars)
             t = client.messages.count_tokens(model=model, messages=[{"role": "user", "content": u}]).input_tokens
             total_user += t
             print(f"  #{n}: user turn ~{t} tokens ({r['size_bucket']}, {len(r['timeline'])} events)", file=sys.stderr)
@@ -328,7 +365,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     if sync:
         total = 0.0
         for n, r in todo.items():
-            params = request_params(model, system, build_user(r, cats, budget_tokens), effort, max_tokens)
+            params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
             msg = client.messages.create(**params)
             payload = _result_payload(n, r["input_hash"], model, False, msg)
             p = store(out_dir, n, r["input_hash"], payload)
@@ -344,7 +381,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
     manifest = []
     for n, r in todo.items():
         cid = f"{n}-{r['input_hash']}"
-        params = request_params(model, system, build_user(r, cats, budget_tokens), effort, max_tokens)
+        params = request_params(model, system, build_user(r, cats, budget_tokens, git_dir, patch_chars), effort, max_tokens)
         requests.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(**params)))
         manifest.append({"custom_id": cid, "number": n, "input_hash": r["input_hash"]})
     batch = client.messages.batches.create(requests=requests)
