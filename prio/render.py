@@ -278,7 +278,7 @@ COL_LABELS = {"prio": "Priority", "judged": "Judged", "rev": "Reviewability", "r
 class Cell:
     """One column of a PR: the condensed value for the summary row and the
     detail block for the row under it. ``detail_html`` replaces the bullet
-    list built from ``lines`` when given; ``lines`` still feed the tooltip."""
+    list built from ``lines`` when given."""
 
     def __init__(self, col: str, brief: str, lines: list[str], style: str = "", extra_html: str = "", detail_html: str | None = None):
         self.col, self.brief, self.lines, self.style, self.extra_html, self.detail_html = col, brief, lines, style, extra_html, detail_html
