@@ -89,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     dpsub = dp.add_subparsers(dest="pcmd", required=True)
     dps = dpsub.add_parser("submit")
     dps.add_argument("--extract", required=True, type=Path)
-    dps.add_argument("--dossier", required=True, type=Path)
+    dps.add_argument("--dossier", type=Path, help="dossier dir (or use --data)")
+    dps.add_argument("--data", type=Path, help="ledger data dir: read the ledger view instead of dossiers")
     dps.add_argument("--out", required=True, type=Path, help="display output dir (display/<n>/<dossier-hash>.json)")
     dps.add_argument("--only")
     dps.add_argument("--model", default="claude-sonnet-5")
@@ -106,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rk = sub.add_parser("rank", help="stage 3: one listwise call per category for consistent bands and order (on demand)")
     rk.add_argument("--extract", required=True, type=Path)
-    rk.add_argument("--dossier", required=True, type=Path)
+    rk.add_argument("--dossier", type=Path, help="dossier dir (or use --data)")
+    rk.add_argument("--data", type=Path, help="ledger data dir: read the ledger view instead of dossiers")
     rk.add_argument("--display", type=Path)
     rk.add_argument("--out", required=True, type=Path, help="rank output dir (rank/<category>/<stamp>.json)")
     rk.add_argument("--category", action="append", help="limit to a category (repeatable)")
@@ -170,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
-    rd.add_argument("--dossier", required=True, type=Path)
+    rd.add_argument("--dossier", type=Path, help="dossier dir (or use --data)")
+    rd.add_argument("--data", type=Path, help="ledger data dir: read the ledger view instead of dossiers")
     rd.add_argument("--out", required=True, type=Path)
     rd.add_argument("--display", type=Path, help="dir of sidecar display files <n>.json (used when the dossier has no display object)")
     rd.add_argument("--rank", type=Path, help="rank stage output dir; when present, rows use its bands and order")
@@ -211,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import display
 
         only = parse_only(args.only)
-        res = display.cmd_submit(cfg, args.extract, args.dossier, args.out, only, args.model, args.dry_run, args.sync, args.force)
+        res = display.cmd_submit(cfg, args.extract, args.dossier, args.out, only, args.model, args.dry_run, args.sync, args.force, data_dir=args.data)
     elif args.cmd == "display" and args.pcmd == "collect":
         from . import dossier
 
@@ -253,11 +256,11 @@ def main(argv: list[str] | None = None) -> int:
         from . import rank
 
         only = set(args.category) if args.category else None
-        res = rank.run(cfg, args.extract, args.dossier, args.display, args.out, only, args.model, args.effort, args.dry_run, args.force)
+        res = rank.run(cfg, args.extract, args.dossier, args.display, args.out, only, args.model, args.effort, args.dry_run, args.force, data_dir=args.data)
     elif args.cmd == "render":
         from . import render
 
-        res = render.render(cfg, args.extract, args.dossier, args.out, args.display, args.rank)
+        res = render.render(cfg, args.extract, args.dossier, args.out, args.display, args.rank, data_dir=args.data)
     elif args.cmd == "report":
         from . import report
 

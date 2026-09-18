@@ -72,10 +72,14 @@ def store(out_dir: Path, n: int, h: str, payload: dict) -> Path:
     return p
 
 
-def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, only: set[int] | None,
-               model: str, dry_run: bool, sync: bool, force: bool) -> dict:
-    dossiers = load_latest(dossier_dir)
+def cmd_submit(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Path, only: set[int] | None,
+               model: str, dry_run: bool, sync: bool, force: bool, data_dir: Path | None = None) -> dict:
     recs = load_extract(extract_dir, only)
+    if data_dir:
+        from .ledgerview import build_view
+        dossiers = build_view(cfg, data_dir, recs)
+    else:
+        dossiers = load_latest(dossier_dir)
     def dstem(d):  # display output is keyed by the dossier it rewrites plus the display model
         return f"{dossier_stem(d)}-{model_slug(model)}"
     def have(d):

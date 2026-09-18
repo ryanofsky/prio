@@ -453,19 +453,26 @@ def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
     return out
 
 
-def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, display_dir: Path | None = None,
-           rank_dir: Path | None = None) -> dict:
+def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Path, display_dir: Path | None = None,
+           rank_dir: Path | None = None, data_dir: Path | None = None) -> dict:
     cats = {c.name: c for c in load_categories(cfg.categories_dir)}
     _SIZE_CFG.update({"small": cfg.size_small, "medium": cfg.size_medium, "large": cfg.size_large})
     if cfg.repos:
         _REPO_URL["url"] = f"https://github.com/{cfg.repos[0].full_name}"
-    dossiers = load_latest(dossier_dir)
     recs: dict[int, dict] = {}
-    for n in dossiers:
-        p = extract_dir / "prs" / f"{n}.json"
-        if p.exists():
-            with open(p) as f:
-                recs[n] = json.load(f)
+    if data_dir:
+        from .dossier import load_extract
+        from .ledgerview import build_view
+        recs = load_extract(extract_dir, None)
+        dossiers = build_view(cfg, data_dir, recs)
+        recs = {n: recs[n] for n in dossiers}
+    else:
+        dossiers = load_latest(dossier_dir)
+        for n in dossiers:
+            p = extract_dir / "prs" / f"{n}.json"
+            if p.exists():
+                with open(p) as f:
+                    recs[n] = json.load(f)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "data").mkdir(exist_ok=True)
     (out_dir / "pr").mkdir(exist_ok=True)
@@ -475,7 +482,11 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path, out_dir: Path, dis
         r = d.get("result")
         if not r or n not in recs:
             continue
-        shutil.copy(dossier_dir / str(n) / f"{(dossier_dir / str(n) / 'latest').read_text().strip()}.json", out_dir / "data" / f"dossier-{n}.json")
+        if data_dir:
+            with open(out_dir / "data" / f"dossier-{n}.json", "w") as f:
+                json.dump(d, f, indent=1)
+        else:
+            shutil.copy(dossier_dir / str(n) / f"{(dossier_dir / str(n) / 'latest').read_text().strip()}.json", out_dir / "data" / f"dossier-{n}.json")
         shutil.copy(extract_dir / "prs" / f"{n}.json", out_dir / "data" / f"extract-{n}.json")
         for c in r["categories"]:
             if c["member"]:

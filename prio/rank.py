@@ -91,12 +91,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def run(cfg: Config, extract_dir: Path, dossier_dir: Path, display_dir: Path | None, out_dir: Path,
-        only: set[str] | None, model: str, effort: str, dry_run: bool, force: bool = False) -> dict:
+def run(cfg: Config, extract_dir: Path, dossier_dir: Path | None, display_dir: Path | None, out_dir: Path,
+        only: set[str] | None, model: str, effort: str, dry_run: bool, force: bool = False, data_dir: Path | None = None) -> dict:
     from .render import load_display
     cats = [c for c in load_categories(cfg.categories_dir) if not only or c.name in only]
-    dossiers = load_latest(dossier_dir)
     recs = load_extract(extract_dir, None)
+    if data_dir:
+        from .ledgerview import build_view
+        dossiers = build_view(cfg, data_dir, recs)
+    else:
+        dossiers = load_latest(dossier_dir)
     displays = {n: load_display(display_dir, n, d) for n, d in dossiers.items()}
     client = _client()
     total = 0.0
