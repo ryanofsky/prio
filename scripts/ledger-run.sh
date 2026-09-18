@@ -25,7 +25,12 @@ export HOME=$D PYTHONPATH=$D/src/engine PRIO_OPENROUTER_WORKERS=${PRIO_OPENROUTE
 mkdir -p "$D/logs" "$L"
 exec > >(tee -a "$D/logs/ledger-$(date -u +%Y%m%d-%H%M).log") 2>&1
 prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
+SCHED=${PRIO_SCHEDULE_TEXT:-Daily ledger run at 01:00 UTC; weekly ranking pass on Sundays at 04:00 UTC.}
+LIVE_SITE=${PRIO_LIVE_SITE:-$D/site}
+mark() { mkdir -p "$D/status"; echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"; prio status-page --data-dir "$D" --site-dir "$LIVE_SITE" --next-runs "$SCHED" >/dev/null 2>&1 || true; }
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
+trap 'mark "FAILED at line $LINENO"' ERR
+: > "$D/status/current.log" 2>/dev/null || mkdir -p "$D/status"; mark "ledger run started"
 only=(); [ -n "${PRIO_ONLY:-}" ] && only=(--only "$PRIO_ONLY")
 
 if [ ! -d "$L/.git" ]; then
@@ -46,19 +51,23 @@ if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
   prio git --repo "$D/bitcoin.git" --url "${PRIO_PROJECT_REPO:-https://github.com/bitcoin/bitcoin.git}" --extract "$D/extract" --out "$D/git" --budget-chars "${PRIO_PATCH_CHARS:-40000}" >/dev/null 2>>"$D/git.log" || true
   bash "$D/src/engine/scripts/refs-index.sh" "${PRIO_BACKUP:-/var/lib/github-metadata-backup/data/bitcoin/bitcoin}" > "$D/refs-index.tsv"
   prio extract --backup "${PRIO_BACKUP:-/var/lib/github-metadata-backup/data/bitcoin/bitcoin}" --out "$D/extract" --refs-index "$D/refs-index.tsv" --git "$D/git" >/dev/null
+  mark "extract done"
 fi
 
 log "thread reads"
 prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
 prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
+mark "thread reads done"
 log "code assessments and judgments"
 prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
+mark "code assessments and judgments done"
 log "display lines"
 prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
 log "render to $OUT"
 prio render --extract "$D/extract" --data "$L" --display "$L/display" --rank "$RANK" --out "$L/site.new" >/dev/null
-mkdir -p "$OUT"; rsync -a --delete "$L/site.new/" "$OUT/"; rm -rf "$L/site.new"
+mkdir -p "$OUT"; rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ "$L/site.new/" "$OUT/"; rm -rf "$L/site.new"
 log "commit"
 git -C "$L" add -A
 git -C "$L" commit --quiet -m "run $(date -u +%F): $(git -C "$L" diff --cached --stat | tail -1)" || log "nothing to commit"
+mark "done: site published"
 log "done"
