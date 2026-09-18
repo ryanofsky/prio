@@ -104,16 +104,11 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         return {"dry_run": True, "reads": len(todo)}
     if not model.startswith("openrouter/"):
         client = _client()
-    for n, rec, record, d, path in todo:
+    from .openrouter import run_many
+
+    def one(job):
+        n, rec, record, d, path = job
         sysm, user = ledger.build_thread_request(record, rec, d, _prior_text(prior_dir, n))
-        stem = f"{rec['repo'].replace('/', '-')}-{n}-{'seed' if d['is_new'] else 'thread'}"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        with open(raw_dir / f"{stem}.request.json", "w") as f:
-            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model,
-                       "prompt_hash": ph, "system_chars": len(sysm[0]["text"]), "user": user}, f, indent=1)
-        # Two reads for a seed (a fresh record) when asked: the same request
-        # twice, merged by union before applying, so an objection has to be
-        # missed twice to be omitted.
         n_reads = reads if (d["is_new"] and reads > 1) else 1
         msgs, parsed_list, err = [], [], None
         try:
@@ -123,6 +118,17 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
                 parsed_list.append(json.loads(next((b.text for b in m_.content if b.type == "text"), "")))
         except Exception as e:
             err = str(e)[:300]
+        return job, sysm, user, n_reads, msgs, parsed_list, err
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    for res in run_many(todo, one):
+        if isinstance(res, Exception):
+            manifest["errors"].append(str(res)[:200]); continue
+        (n, rec, record, d, path), sysm, user, n_reads, msgs, parsed_list, err = res
+        stem = f"{rec['repo'].replace('/', '-')}-{n}-{'seed' if d['is_new'] else 'thread'}"
+        with open(raw_dir / f"{stem}.request.json", "w") as f:
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model,
+                       "prompt_hash": ph, "system_chars": len(sysm[0]["text"]), "user": user}, f, indent=1)
         msg = msgs[0] if msgs else None
         text = "\n\n=== second read ===\n\n".join(next((b.text for b in m_.content if b.type == "text"), "") for m_ in msgs)
         parsed = None

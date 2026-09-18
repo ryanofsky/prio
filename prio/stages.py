@@ -287,71 +287,87 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
             print("\n===== SAMPLE JUDGE USER TURN =====\n" + judge_user(rec, record, code or {"summary": "(code assessment pending)"}, cands)[:4000])
         return {"dry_run": True, "code": sum(1 for p in plan if p[6]), "judge": sum(1 for p in plan if p[7])}
     raw_dir.mkdir(parents=True, exist_ok=True)
-    for n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd in plan:
+    from .openrouter import run_many
+
+    def record_call(stem, stage, n, rec, user, msg, text, parsed, cost, err):
+        with open(raw_dir / f"{stem}-{stage}.request.json", "w") as f:
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": stage, "model": model, "user": user}, f, indent=1)
+        with open(raw_dir / f"{stem}-{stage}.response.json", "w") as f:
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": stage, "model": model, "created": ledger._now(),
+                       "usage": usage_dict(msg.usage) if msg else None, "cost_usd": cost, "error": err, "raw_text": text, "result": parsed}, f, indent=1)
+        manifest["calls"].append({"pr": f"{rec['repo']}#{n}", "stage": stage, "cost_usd": cost, "error": err})
+        manifest["cost_usd"] += cost or 0
+        if err:
+            manifest["errors"].append(f"#{n} {stage}: {err}")
+
+    # Phase 1: code assessments, in parallel.
+    def code_job(item):
+        n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd = item
+        prior = None
+        if cpath.parent.exists():
+            olds = sorted(cpath.parent.glob("*.json"), key=lambda p: p.stat().st_mtime)
+            prior = _load(olds[-1]) if olds else None
+        user = code_user(rec, git_dir, patch_chars, prior)
+        try:
+            msg = _call(model, csys, user, CODE_SCHEMA, effort, max_tokens, client)
+            text, parsed, cost = _response(msg, model)
+            return item, user, msg, text, parsed, cost, None
+        except Exception as e:
+            return item, user, None, "", None, 0.0, str(e)[:300]
+
+    codes = {}
+    for res in run_many([p for p in plan if p[6]], code_job):
+        if isinstance(res, Exception):
+            manifest["errors"].append(str(res)[:200]); continue
+        item, user, msg, text, parsed, cost, err = res
+        n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd = item
         stem = f"{rec['repo'].replace('/', '-')}-{n}"
-        if need_code:
-            prior = None
-            cdir = cpath.parent
-            if cdir.exists():
-                olds = sorted(cdir.glob("*.json"), key=lambda p: p.stat().st_mtime)
-                prior = _load(olds[-1]) if olds else None
-            user = code_user(rec, git_dir, patch_chars, prior)
-            with open(raw_dir / f"{stem}-code.request.json", "w") as f:
-                json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "code", "model": model, "user": user}, f, indent=1)
-            try:
-                msg = _call(model, csys, user, CODE_SCHEMA, effort, max_tokens, client)
-                text, parsed, cost = _response(msg, model)
-                err = None
-            except Exception as e:
-                msg, text, parsed, cost, err = None, "", None, 0.0, str(e)[:300]
-            with open(raw_dir / f"{stem}-code.response.json", "w") as f:
-                json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "code", "model": model, "created": ledger._now(),
-                           "usage": usage_dict(msg.usage) if msg else None, "cost_usd": cost, "error": err, "raw_text": text, "result": parsed}, f, indent=1)
-            manifest["calls"].append({"pr": f"{rec['repo']}#{n}", "stage": "code", "cost_usd": cost, "error": err})
-            manifest["cost_usd"] += cost or 0
-            if err:
-                manifest["errors"].append(f"#{n} code: {err}")
-                print(f"  #{n}: code ERROR {err}", file=sys.stderr)
-                continue
-            code = dict(parsed, repo=rec["repo"], number=n, patch_id=pid, head_sha=rec["head_sha"], assessed_at=ledger._now(), run=run, model=model,
-                        size={"additions": rec["additions"], "deletions": rec["deletions"], "files": rec["changed_files"], "test_lines": rec.get("test_lines")})
-            _save(cpath, code)
-            print(f"  #{n}: code ${cost:.4f}", file=sys.stderr)
-        if need_judge and code:
-            user = judge_user(rec, record, code, cands)
-            with open(raw_dir / f"{stem}-judge.request.json", "w") as f:
-                json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "judge", "model": model, "user": user}, f, indent=1)
-            try:
-                msg = _call(model, jsys, user, JUDGE_SCHEMA, effort, max_tokens, client)
-                text, parsed, cost = _response(msg, model)
-                err = None
-            except Exception as e:
-                msg, text, parsed, cost, err = None, "", None, 0.0, str(e)[:300]
-            with open(raw_dir / f"{stem}-judge.response.json", "w") as f:
-                json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "judge", "model": model, "created": ledger._now(),
-                           "usage": usage_dict(msg.usage) if msg else None, "cost_usd": cost, "error": err, "raw_text": text, "result": parsed}, f, indent=1)
-            manifest["calls"].append({"pr": f"{rec['repo']}#{n}", "stage": "judge", "cost_usd": cost, "error": err})
-            manifest["cost_usd"] += cost or 0
-            if err:
-                manifest["errors"].append(f"#{n} judge: {err}")
-                print(f"  #{n}: judge ERROR {err}", file=sys.stderr)
-                continue
-            by_name = {c["name"]: c for c in parsed.get("categories") or []}
-            written = []
-            for c in cands:
-                j = by_name.get(c.name)
-                if not j:
-                    manifest["errors"].append(f"#{n} judge: no entry for {c.name}")
-                    continue
-                if not j.get("member"):
-                    j = dict(j, band="Unranked", score=0.0)
-                _save(judgment_path(data_dir, rec["repo"], c.name, n),
-                      {"repo": rec["repo"], "number": n, "category": c.name, "category_hash": category_hash(c), "priority_hash": phash,
-                       "from": {"patch_id": pid, "claims_digest": cd}, "judged_at": ledger._now(), "run": run, "model": model,
-                       "member": bool(j.get("member")), "evidence": j.get("evidence"), "band": j.get("band"), "score": j.get("score"),
-                       "reason_tag": j.get("reason_tag"), "rationale": j.get("rationale"), "factors": parsed.get("factors")})
-                written.append(f"{c.name}={j.get('band') if j.get('member') else '-'}")
-            print(f"  #{n}: judge ${cost:.4f} {' '.join(written)}", file=sys.stderr)
+        record_call(stem, "code", n, rec, user, msg, text, parsed, cost, err)
+        if err:
+            print(f"  #{n}: code ERROR {err}", file=sys.stderr); continue
+        code = dict(parsed, repo=rec["repo"], number=n, patch_id=pid, head_sha=rec["head_sha"], assessed_at=ledger._now(), run=run, model=model,
+                    size={"additions": rec["additions"], "deletions": rec["deletions"], "files": rec["changed_files"], "test_lines": rec.get("test_lines")})
+        _save(cpath, code)
+        codes[n] = code
+        print(f"  #{n}: code ${cost:.4f}", file=sys.stderr)
+
+    # Phase 2: judgments, in parallel, for PRs with a code file.
+    def judge_job(item):
+        n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd = item
+        code = codes.get(n) or code
+        user = judge_user(rec, record, code, cands)
+        try:
+            msg = _call(model, jsys, user, JUDGE_SCHEMA, effort, max_tokens, client)
+            text, parsed, cost = _response(msg, model)
+            return item, user, msg, text, parsed, cost, None
+        except Exception as e:
+            return item, user, None, "", None, 0.0, str(e)[:300]
+
+    judge_items = [p for p in plan if p[7] and (codes.get(p[0]) or p[5])]
+    for res in run_many(judge_items, judge_job):
+        if isinstance(res, Exception):
+            manifest["errors"].append(str(res)[:200]); continue
+        item, user, msg, text, parsed, cost, err = res
+        n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd = item
+        stem = f"{rec['repo'].replace('/', '-')}-{n}"
+        record_call(stem, "judge", n, rec, user, msg, text, parsed, cost, err)
+        if err:
+            print(f"  #{n}: judge ERROR {err}", file=sys.stderr); continue
+        by_name = {c["name"]: c for c in parsed.get("categories") or []}
+        written = []
+        for c in cands:
+            j = by_name.get(c.name)
+            if not j:
+                manifest["errors"].append(f"#{n} judge: no entry for {c.name}"); continue
+            if not j.get("member"):
+                j = dict(j, band="Unranked", score=0.0)
+            _save(judgment_path(data_dir, rec["repo"], c.name, n),
+                  {"repo": rec["repo"], "number": n, "category": c.name, "category_hash": category_hash(c), "priority_hash": phash,
+                   "from": {"patch_id": pid, "claims_digest": cd}, "judged_at": ledger._now(), "run": run, "model": model,
+                   "member": bool(j.get("member")), "evidence": j.get("evidence"), "band": j.get("band"), "score": j.get("score"),
+                   "reason_tag": j.get("reason_tag"), "rationale": j.get("rationale"), "factors": parsed.get("factors")})
+            written.append(f"{c.name}={j.get('band') if j.get('member') else '-'}")
+        print(f"  #{n}: judge ${cost:.4f} {' '.join(written)}", file=sys.stderr)
     manifest["ended"] = ledger._now()
     (data_dir / "runs").mkdir(parents=True, exist_ok=True)
     with open(data_dir / "runs" / f"{run.split(':', 1)[1]}.json", "w") as f:
