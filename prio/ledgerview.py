@@ -75,7 +75,8 @@ def _agreement(record: dict) -> dict:
                for s in record["support"]]
     participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or ""} for p in record["participants"]]
     summary = f"{state}: {why}"
-    return {"state": state, "summary": summary, "reason": why + ".", "evidence": lines, "objections": objections, "support": support,
+    reason = record.get("notes") or ("Derived from the claims and support below; every entry links to the statement it came from.")
+    return {"state": state, "summary": summary, "reason": reason, "evidence": lines, "objections": objections, "support": support,
             "participants": participants, "derivation": why, "model_state": None, "corrections": [], "notes": record.get("notes")}
 
 
