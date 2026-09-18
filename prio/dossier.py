@@ -642,13 +642,20 @@ def derive_agreement(ag: dict) -> tuple[str, str]:
     sup = ag.get("support") or []
     open_blocking = [o for o in obj if o.get("status") == "open" and o.get("blocking") and o.get("harm")]
     open_nonblocking = [o for o in obj if o.get("status") == "open" and not o.get("blocking") and o.get("harm")]
+    def names(items, key="reviewer"):
+        seen = []
+        for o in items:
+            if o.get(key) and o[key] not in seen:
+                seen.append(o[key])
+        return ", ".join(seen)
+
     if open_blocking:
         unanswered = [o for o in open_blocking if not o.get("author_replied")]
         if unanswered:
-            return "Blocked", f"blocking objection open with no author reply ({', '.join(o['reviewer'] for o in unanswered)})"
-        return "Disputed", f"blocking objection open, author engaging ({', '.join(o['reviewer'] for o in open_blocking)})"
+            return "Blocked", f"blocking objection open with no author reply ({names(unanswered)})"
+        return "Disputed", f"blocking objection open, author engaging ({names(open_blocking)})"
     if open_nonblocking:
-        return "Mild", f"nonblocking objection open ({', '.join(o['reviewer'] for o in open_nonblocking)})"
+        return "Mild", f"nonblocking objection open ({names(open_nonblocking)})"
     caveats = [o for o in obj if o.get("status") == "agreed_to_disagree"]
     if sup:
         if caveats:

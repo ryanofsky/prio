@@ -78,6 +78,16 @@ def save(path: Path, record: dict) -> None:
         f.write("\n")
 
 
+def as_of(rec: dict, date: str) -> dict:
+    """A copy of an extract record as it would have looked at the end of
+    ``date`` (YYYY-MM-DD): statements after it dropped, the head and
+    patch-id left as they are (the replay measures the thread path). For
+    the drift test only."""
+    out = dict(rec)
+    out["timeline"] = [e for e in rec["timeline"] if (e.get("t") or "")[:10] <= date]
+    return out
+
+
 def statements(rec: dict) -> list[dict]:
     """Timeline events that are statements by people, with identity."""
     return [e for e in rec["timeline"] if e.get("kind") in STATEMENT_KINDS and e.get("id")]

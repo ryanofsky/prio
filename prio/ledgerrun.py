@@ -64,9 +64,12 @@ def _call(model: str, system: list[dict], user: str, effort: str, max_tokens: in
 
 
 def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | None, model: str, effort: str,
-               dry_run: bool, prior_dir: Path | None, max_tokens: int = 16000, force: bool = False) -> dict:
+               dry_run: bool, prior_dir: Path | None, max_tokens: int = 16000, force: bool = False,
+               as_of: str | None = None, run_kind: str = "", reads: int = 1) -> dict:
     recs = load_extract(extract_dir, only)
-    run = _run_id()
+    if as_of:
+        recs = {n: ledger.as_of(r, as_of) for n, r in recs.items()}
+    run = _run_id(run_kind)
     raw_dir = data_dir / "raw" / run.split(":", 1)[1]
     system = ledger.thread_system()
     ph = ledger.prompt_hash(system)

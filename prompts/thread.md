@@ -50,7 +50,7 @@ Approvals with no rationale from accounts with no history in the project
 are not support.
 
 Participants. One entry per person in the participants list you are
-given, with a stance: objection if any of their statements names a cost
+given (reviewers and commenters; never the PR author), with a stance: objection if any of their statements names a cost
 of merging (then it must appear in claims), support if they spoke for
 the change, question if they only asked and were answered, neutral for
 nits, process, or off-topic. Fill this first; it is the checklist.

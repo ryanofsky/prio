@@ -144,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     lu.add_argument("--prior", type=Path, help="old dossier dir; its discussion state is given as a prior on seed reads")
     lu.add_argument("--dry-run", action="store_true")
     lu.add_argument("--force", action="store_true", help="start every record from empty (re-seed)")
+    lu.add_argument("--as-of", help="drift test: treat the extract as of this date (YYYY-MM-DD), dropping later statements")
+    lu.add_argument("--run-kind", default="", help="suffix for the run id (e.g. replay)")
     ls = lgsub.add_parser("show", help="print one record as the model sees it")
     ls.add_argument("--data", required=True, type=Path)
     ls.add_argument("--repo", default=None, help="owner/name (default: the first repo in project.toml)")
@@ -220,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "ledger" and args.lcmd == "update":
         from . import ledgerrun
 
-        res = ledgerrun.cmd_update(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.dry_run, args.prior, force=args.force)
+        res = ledgerrun.cmd_update(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.dry_run, args.prior,
+                                   force=args.force, as_of=args.as_of, run_kind=args.run_kind)
     elif args.cmd == "ledger" and args.lcmd == "show":
         from . import ledgerrun
 
