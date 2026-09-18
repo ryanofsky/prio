@@ -3,6 +3,12 @@
 A category is one markdown file with front matter (title, owner, and
 pre-filter hints: labels, paths, keywords) followed by the text the model
 reads. The front matter values are either plain strings or JSON arrays.
+
+A file with ``kind: computed`` is a category whose members are decided
+by a rule instead of the model: ``not_in`` lists category names, and the
+members are every assessed PR that belongs to none of them. Such a
+category never reaches the judge, display, or ranking stages; only the
+renderer sees it, so ``load_categories`` leaves it out unless asked.
 """
 
 from __future__ import annotations
@@ -25,6 +31,12 @@ class Category:
     keywords: list[str]
     body: str
     extra: dict = field(default_factory=dict)
+    kind: str = "model"
+    not_in: list[str] = field(default_factory=list)
+
+    @property
+    def computed(self) -> bool:
+        return self.kind == "computed"
 
     def hint_matches(self, rec: dict) -> dict:
         """Which pre-filter hints match an extract record (for the prompt and for pre-filtering)."""
@@ -67,11 +79,19 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
     return meta, text[m.end():]
 
 
-def load_categories(cat_dir: Path) -> list[Category]:
+def load_categories(cat_dir: Path, computed: bool = False) -> list[Category]:
+    """The model-judged categories; with ``computed=True`` the computed ones too."""
     cats: list[Category] = []
     for p in sorted(cat_dir.glob("*.md")):
         meta, body = parse_front_matter(p.read_text())
-        known = {"title", "owner", "labels", "paths", "keywords"}
+        known = {"title", "owner", "labels", "paths", "keywords", "kind", "not_in"}
+        kind = meta.get("kind", "model")
+        if kind not in ("model", "computed"):
+            raise ValueError(f"{p}: unknown category kind {kind!r} (expected 'model' or 'computed')")
+        if kind == "computed" and not meta.get("not_in"):
+            raise ValueError(f"{p}: a computed category needs a 'not_in' list of category names")
+        if kind == "computed" and not computed:
+            continue
         cats.append(Category(
             name=p.stem,
             title=meta.get("title", p.stem),
@@ -81,5 +101,13 @@ def load_categories(cat_dir: Path) -> list[Category]:
             keywords=list(meta.get("keywords", [])),
             body=body.strip(),
             extra={k: v for k, v in meta.items() if k not in known},
+            kind=kind,
+            not_in=list(meta.get("not_in", [])),
         ))
+    if computed:
+        names = {c.name for c in cats}
+        for c in cats:
+            missing = [x for x in c.not_in if x not in names]
+            if missing:
+                raise ValueError(f"{cat_dir / (c.name + '.md')}: not_in names unknown categories {missing}")
     return cats

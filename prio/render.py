@@ -1,11 +1,22 @@
 """Stage 5: render extract + dossiers into a static site.
 
-One page per category, one row per member PR sorted by score. Every cell
-shows a condensed value and holds a detail block: click a cell to toggle
-its detail, click the PR cell to toggle the whole row, click a column
-header to toggle that column, and hover for the detail as a tooltip. No
-external assets; CSS and JS are inlined so the pages work from a file://
-URL and behind any static server.
+One page per category, one row per member PR sorted by score. Each PR is
+two table rows: a summary row whose cells show a condensed value (with the
+detail as a tooltip), and a detail row under it that starts collapsed.
+Clicking anywhere in the summary row that is not a link opens the detail
+row with a short expansion; a #pr-N link in the URL opens that row on
+load. No external assets; CSS and JS are inlined so the pages work from
+a file:// URL and behind any static server.
+
+A PR page shows the same table with the PR's one row already open and the
+priority column left out, because priority belongs to a category: under
+the row, one card per category the PR is in carries that category's
+priority cell, and the long analysis follows.
+
+A computed category (``kind: computed`` in its file) lists every assessed
+PR the model placed in none of the categories it names; its page has a
+"Judged" column in place of priority, showing which categories were
+asked and what they said.
 
 Color carries state: the priority cell shades from white (highest score)
 to gray (lowest) and the score itself is never shown; reviewability,
@@ -54,27 +65,43 @@ h1 { font-size: 1.4rem; margin: .5rem 0 .25rem; } .sub { color: var(--muted); fo
 nav.cats a { margin-right: 1rem; }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; background: #fff; table-layout: fixed; }
 col.c-pr { width: 42%; } col.c-prio { width: 13%; } col.c-rev { width: 13%; } col.c-reviews { width: 8%; } col.c-agree { width: 13%; } col.c-size { width: 11%; }
+table.noprio col.c-pr { width: 55%; }
 td { overflow-wrap: anywhere; }
 th, td { border: 1px solid var(--border); padding: .35rem .5rem; vertical-align: top; text-align: left; }
 th { background: #f0f0f0; position: sticky; top: 0; }
 td .brief { display: block; }
-td .detail { display: none; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; }
-tr.open td .detail { display: block; }
-tr.open td { border-top: 2px solid #444; border-bottom: 2px solid #444; }
+table.toggle tr.row td { cursor: pointer; }
+tr.row { scroll-margin-top: 2.4rem; } /* a #pr-N link lands below the sticky header */
+/* The detail row: its cells carry no padding or horizontal borders of their own, so a
+   collapsed row is zero height and the grid line between summary rows stays single. The
+   grid-template-rows transition is the expansion; the clip div hides the content at 0fr. */
+tr.det td { padding: 0 .5rem; border-top: 0; border-bottom: 0; }
+tr.det .dwrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .12s ease-out; }
+tr.det.open .dwrap { grid-template-rows: 1fr; }
+tr.det .dclip { overflow: hidden; min-height: 0; }
+tr.det .detail { padding: .4rem 0 .35rem; border-top: 1px dashed #bbb; font-size: .83rem; white-space: normal; font-weight: 400; }
+@media (prefers-reduced-motion: reduce) { tr.det .dwrap { transition: none; } }
+tr.row.open td { border-top: 2px solid #444; } tr.det.open td { border-bottom: 2px solid #444; }
 tr.open td:first-child { border-left: 2px solid #444; } tr.open td:last-child { border-right: 2px solid #444; }
-td .brief { cursor: pointer; }
 td.pr .title { overflow-wrap: anywhere; } td.pr .title { font-weight: 500; } td.pr .author { color: var(--muted); font-style: italic; }
 td.prio { white-space: nowrap; } td.prio .brief { font-weight: 600; } td.prio .tag { font-weight: 400; color: #333; }
-td .detail { font-weight: 400; }
+td.judged .brief { color: var(--muted); }
 td.reviews .brief, td.size .brief { white-space: nowrap; }
 td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-style: italic; color: #555; }
 .detail ul { margin: 0; padding-left: 1.1rem; } .detail li { margin: .15rem 0; }
 .detail .k { color: var(--muted); }
+/* PR page: the category cards under the row, one small table each so the priority cell
+   keeps the look it has in a category table (header above, open cell below). */
+tr.cards > td { padding: .6rem .5rem; background: #fafafa; }
+.cardset { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; }
+table.card { width: 13%; min-width: 12rem; table-layout: fixed; background: #fff; }
+table.card th { position: static; font-weight: 600; } table.card th .pos { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
 .legend { font-size: .8rem; color: var(--muted); background: #f7f7f7; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0; }
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
 .more { font-size: .8rem; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; }
+.prpage .anchor { margin-top: 1.4rem; }
 nav.top { font-size: .85rem; margin-bottom: .6rem; } nav.top a { margin-right: 1rem; }
 h1 a { color: inherit; } h1 a:hover { text-decoration: underline; }
 .intro { max-width: 60rem; } .intro p { margin: .4rem 0 .8rem; }
@@ -97,15 +124,25 @@ ul.catlist { line-height: 1.7; padding-left: 1.2rem; } ul.catlist .editor { colo
 """
 
 JS = """
+function setOpen(row, open) {
+  row.classList.toggle('open', open);
+  var det = row.nextElementSibling;
+  if (det && det.classList.contains('det')) det.classList.toggle('open', open);
+  var g = row.querySelector('td.pr .tg'); if (g) g.textContent = open ? '(\\u2212)' : '(+)';
+}
 document.addEventListener('click', function (ev) {
   if (ev.target.closest('a')) return;
-  var brief = ev.target.closest('.brief');
-  if (!brief) return;
-  var tr = brief.closest('tr');
-  if (!tr) return;
-  tr.classList.toggle('open');
-  var g = tr.querySelector('td.pr .tg'); if (g) g.textContent = tr.classList.contains('open') ? '(\\u2212)' : '(+)';
+  var row = ev.target.closest('tr.row');
+  if (!row || !row.closest('table.toggle')) return;
+  if (window.getSelection && String(window.getSelection())) return;
+  setOpen(row, !row.classList.contains('open'));
 });
+function openHash() {
+  var row = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
+  if (row && row.classList.contains('row') && row.closest('table.toggle')) setOpen(row, true);
+}
+window.addEventListener('hashchange', openHash);
+openHash();
 """
 
 
@@ -187,10 +224,27 @@ def _ul(items) -> str:
     return "<ul>" + "".join(f"<li>{_t(i)}</li>" for i in items) + "</ul>" if items else ""
 
 
-def _cell(col: str, brief: str, lines: list[str], style: str = "", extra_html: str = "") -> str:
-    tip = "\n".join(lines)
-    return (f'<td class="{col}" title="{_e(tip)}" style="{style}">'
-            f'<span class="brief">{brief}</span><div class="detail">{_ul(lines)}{extra_html}</div></td>')
+class Cell:
+    """One column of a PR: the condensed value for the summary row and the
+    detail block for the row under it. ``detail_html`` replaces the bullet
+    list built from ``lines`` when given; ``lines`` still feed the tooltip."""
+
+    def __init__(self, col: str, brief: str, lines: list[str], style: str = "", extra_html: str = "", detail_html: str | None = None):
+        self.col, self.brief, self.lines, self.style, self.extra_html, self.detail_html = col, brief, lines, style, extra_html, detail_html
+
+    def summary_td(self) -> str:
+        return f'<td class="{self.col}" title="{_e(chr(10).join(self.lines))}" style="{self.style}"><span class="brief">{self.brief}</span></td>'
+
+    def detail_td(self) -> str:
+        inner = self.detail_html if self.detail_html is not None else _ul(self.lines)
+        return f'<td class="{self.col}" style="{self.style}"><div class="dwrap"><div class="dclip"><div class="detail">{inner}{self.extra_html}</div></div></div></td>'
+
+
+def _rows(cells: list[Cell], cls: str = "", open: bool = False, anchor: str = "") -> str:
+    """The summary row and the detail row for one PR (or one card)."""
+    state = f'{cls} open' if open else cls
+    return (f'<tr class="row {state}"' + (f' id="{anchor}"' if anchor else "") + '>' + "".join(c.summary_td() for c in cells) + '</tr>'
+            f'<tr class="det {state}">' + "".join(c.detail_td() for c in cells) + '</tr>')
 
 
 def load_display(display_dir: Path | None, n: int, d: dict) -> dict | None:
@@ -294,21 +348,43 @@ def _reviews(rec: dict) -> tuple[str, list[str], str, str]:
     return brief, lines, ("<ul>" + "".join(links) + "</ul>") if links else "", style
 
 
-def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_href: str) -> str:
-    r = d["result"]
-    n = rec["number"]
+def _prio_cell(cat: dict, cats: dict, disp: dict | None, r: dict) -> Cell:
+    """The priority cell of one category: band and reason tag, shaded by
+    score, with the display stage's "why" lines. For a computed category
+    the cell instead says which categories were asked about the PR and
+    what each answered, since there is no priority to show."""
+    if cat.get("computed"):
+        judged = cat.get("judged") or []
+        rejected = [j for j in judged if not j["member"]]
+        accepted = [j for j in judged if j["member"]]
+        lines = [f'{cats[j["name"]].title if j["name"] in cats else j["name"]}: {"member. " if j["member"] else "not a member. "}{j.get("evidence") or "(no reason recorded)"}'
+                 for j in judged] or ["No category was asked about this PR"]
+        brief = (f'{len(rejected)} rejected' if judged else "not judged") + (", in " + ", ".join(j["name"] for j in accepted) if accepted else "")
+        return Cell("judged", _e(brief), lines)
     L = display_lines(disp, r, cat)
-    pr_brief = (f'<span class="tg" title="expand/collapse row">(+)</span><a href="{_e(rec["url"])}">#{n}</a> '
-                f'<span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
-    pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>'
     tag = cat.get("reason_tag") or ""
     band = cat.get("rank_band") or cat["band"]
-    prio_brief = f'{_e(band)}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
-    prio_style = f"background:{_shade(cat['score'])};" if band != "Unranked" else ""
+    brief = f'{_e(band)}' + (f' <span class="tag">· {_e(tag)}</span>' if tag else "")
+    style = f"background:{_shade(cat['score'])};" if band != "Unranked" else ""
     if cat.get("rank_band"):
-        L["why"] = [f'{band} after comparing with the other PRs here (assessed alone as {cat["dossier_band"]}): {cat["rank_note"]}'] + L["why"]
+        why = [f'{band} after comparing with the other PRs here (assessed alone as {cat["dossier_band"]}): {cat["rank_note"]}'] + L["why"]
     elif cat.get("rank_note"):
-        L["why"] = L["why"] + [f'Ranking pass: {cat["rank_note"]}']
+        why = L["why"] + [f'Ranking pass: {cat["rank_note"]}']
+    else:
+        why = L["why"]
+    return Cell("prio", brief, why, style=style)
+
+
+def _pr_cells(rec: dict, d: dict, disp: dict | None, pr_href: str | None, toggle: bool = True) -> list[Cell]:
+    """The cells every table shows for a PR: the PR itself, reviewability,
+    reviews, agreement, size. ``pr_href`` adds the "Full analysis" link to
+    the PR cell's detail; a PR page passes None."""
+    r = d["result"]
+    n = rec["number"]
+    L = display_lines(disp, r, None)
+    pr_brief = ((f'<span class="tg" title="expand/collapse row">(+)</span>' if toggle else "")
+                + f'<a href="{_e(rec["url"])}">#{n}</a> <span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
+    pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>' if pr_href else ""
     rv = r["reviewability"]
     rv_style = f"background:{REVIEWABILITY_COLORS.get(rv['state'], '#fff')};"
     rw_brief, rw_lines, rw_links, rw_style = _reviews(rec)
@@ -326,30 +402,62 @@ def _row(rec: dict, d: dict, cat: dict, cat_name: str, disp: dict | None, pr_hre
         sz_brief = f'+{rec["additions"]}/-{rec["deletions"]}'
         sz_lines = [f'{rec["changed_files"]} files', f'{rec["commit_count"]} commits']
         sz_style = f"background:{SIZE_COLORS.get(rec['size_bucket'], '#fff')};"
+    return [Cell("pr", pr_brief, L["goal"], extra_html=pr_extra),
+            Cell("rev", _t(rv["label"]), L["reviewability"], style=rv_style),
+            Cell("reviews", rw_brief, rw_lines, style=rw_style, detail_html=rw_links or None),
+            Cell("agree", _e(ag["state"]), L["agreement"], style=ag_style),
+            Cell("size", sz_brief, sz_lines, style=sz_style)]
+
+
+def _row(rec: dict, d: dict, cat: dict, cats: dict, disp: dict | None, pr_href: str) -> str:
+    """One PR's rows on a category page: the PR cells with the category's priority cell second."""
+    cells = _pr_cells(rec, d, disp, pr_href)
+    cells.insert(1, _prio_cell(cat, cats, disp, d["result"]))
     cls = "unranked" if cat["band"] == "Unranked" else ""
-    reviews_td = (f'<td class="reviews" title="{_e(chr(10).join(rw_lines))}" style="{rw_style}">'
-                  f'<span class="brief">{rw_brief}</span><div class="detail">{rw_links or _ul(rw_lines)}</div></td>')
-    return (f'<tr class="{cls}" id="pr-{n}">'
-            + _cell("pr", pr_brief, L["goal"], extra_html=pr_extra)
-            + _cell("prio", prio_brief, L["why"], style=prio_style)
-            + _cell("rev", _t(rv["label"]), L["reviewability"], style=rv_style)
-            + reviews_td
-            + _cell("agree", _e(ag["state"]), L["agreement"], style=ag_style)
-            + _cell("size", sz_brief, sz_lines, style=sz_style)
-            + "</tr>")
+    return _rows(cells, cls, anchor=f"pr-{rec['number']}")
 
 
-def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]]) -> str:
+def _table_head(prio: str | None, toggle: bool = True) -> str:
+    """The table opening: ``prio`` is the second column's header (None leaves the column out)."""
+    cols = ['<col class="c-pr">'] + (['<col class="c-prio">'] if prio else []) + ['<col class="c-rev">', '<col class="c-reviews">', '<col class="c-agree">', '<col class="c-size">']
+    heads = ['<th>PR</th>'] + ([f'<th>{_e(prio)}</th>'] if prio else []) + ['<th>Reviewability</th>', '<th>Reviews</th>', '<th>Agreement</th>', '<th>Size</th>']
+    cls = " ".join(x for x in ["toggle" if toggle else "", "" if prio else "noprio"] if x)
+    return f'<table class="{cls}"><colgroup>' + "".join(cols) + '</colgroup><thead><tr>' + "".join(heads) + '</tr></thead><tbody>'
+
+
+def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]]) -> str:
+    """The category cards row of a PR page: for each category the PR is in,
+    that category's priority cell as it appears on the category page, under
+    the category's title and the PR's position there."""
+    n = rec["number"]
+    cards = []
+    for c in d["result"]["categories"]:
+        if not c["member"]:
+            continue
+        cat = cats.get(c["name"])
+        title = cat.title if cat else c["name"]
+        pos, total = ranks.get(c["name"], (0, 0))
+        pos_html = f'<span class="pos">#{pos} of {total}</span>' if total and not c.get("computed") else (f'<span class="pos">{total} PRs, unranked</span>' if total else "")
+        cards.append(f'<table class="card"><thead><tr><th><a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>{pos_html}</th></tr></thead><tbody>'
+                     + _rows([_prio_cell(c, cats, disp, d["result"])], open=True) + '</tbody></table>')
+    if not cards:
+        cards.append('<div class="sub">In no category.</div>')
+    return f'<tr class="cards"><td colspan="5"><div class="cardset">{"".join(cards)}</div></td></tr>'
+
+
+def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], legend: str) -> str:
     r = d["result"]
     n = rec["number"]
     L = display_lines(disp, r, None)
     b = []
-    b.append(f'<p><a href="{_e(rec["url"])}">{_e(rec["url"])}</a> · <span class="author">{_e(rec["author"])}</span> · '
+    table = (_table_head(None, toggle=False) + _rows(_pr_cells(rec, d, disp, None, toggle=False), open=True, anchor=f"pr-{n}")
+             + _cards(rec, d, cats, disp, ranks) + "</tbody></table>" + legend)
+    b.append(f'<p class="anchor"><a href="{_e(rec["url"])}">{_e(rec["url"])}</a> · <span class="author">{_e(rec["author"])}</span> · '
              f'+{rec["additions"]}/-{rec["deletions"]} in {rec["changed_files"]} files, {rec["commit_count"]} commits · '
              f'labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}</p>')
     b.append(f'<h2>Goal</h2><div class="box">{_ul(L["goal"])}<p>{_t(r["summary"])}</p><p><span class="k">Problem:</span> {_t(r["problem"])}</p></div>')
     for c in r["categories"]:
-        if not c["member"]:
+        if not c["member"] or c.get("computed"):
             continue
         f = c["factors"]
         title = cats[c["name"]].title if c["name"] in cats else c["name"]
@@ -391,7 +499,7 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     b.append(f'<h2>Data</h2><div class="box"><a href="../data/dossier-{n}.json">dossier JSON</a> · <a href="../data/extract-{n}.json">extract JSON</a> · '
              f'model {_e(d.get("model"))}, generated {_e((d.get("created") or "")[:16])}, confidence {_e(r["confidence"])}, '
              f'input hash {_e(d.get("input_hash"))}{src}</div>')
-    return '<div class="prpage">' + "".join(b) + "</div>"
+    return table + '<div class="prpage">' + "".join(b) + "</div>"
 
 
 def _page(title: str, body: str, sub: str = "", nav: str = "", h1: str | None = None) -> str:
@@ -453,9 +561,26 @@ def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
     return out
 
 
+def computed_members(cat, members: dict, dossiers: dict, recs: dict) -> list:
+    """Rows of a computed category: every assessed PR that is a member of none
+    of the categories it names, newest first. Each row's category dict carries
+    the PR's judgments so the page can show what was asked and answered."""
+    excluded = {n for name in cat.not_in for _, n, _c in members.get(name, [])}
+    rows = []
+    for n, d in dossiers.items():
+        r = d.get("result")
+        if not r or n not in recs or n in excluded:
+            continue
+        judged = [{"name": c["name"], "member": bool(c["member"]), "evidence": c.get("evidence") or ""} for c in r["categories"] if not c.get("computed")]
+        rows.append((float(n), n, {"name": cat.name, "member": True, "computed": True, "band": "", "score": 0.0, "reason_tag": "",
+                                    "rationale": "", "evidence": "", "factors": {}, "judged": judged}))
+    rows.sort(key=lambda x: -x[1])
+    return rows
+
+
 def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Path, display_dir: Path | None = None,
            rank_dir: Path | None = None, data_dir: Path | None = None) -> dict:
-    cats = {c.name: c for c in load_categories(cfg.categories_dir)}
+    cats = {c.name: c for c in load_categories(cfg.categories_dir, computed=True)}
     _SIZE_CFG.update({"small": cfg.size_small, "medium": cfg.size_medium, "large": cfg.size_large})
     if cfg.repos:
         _REPO_URL["url"] = f"https://github.com/{cfg.repos[0].full_name}"
@@ -493,17 +618,22 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
                 members.setdefault(c["name"], []).append((c["score"], n, c))
     for rows in members.values():
         rows.sort(key=lambda x: -x[0])
+    for cat in cats.values():
+        if cat.computed:
+            members[cat.name] = computed_members(cat, members, dossiers, recs)
     rank_info: dict[str, dict] = {}
     for name, rows in members.items():
-        rk = load_rank(rank_dir, name)
+        rk = load_rank(rank_dir, name) if not (name in cats and cats[name].computed) else None
         if not rk:
             continue
         rank_info[name] = rk
         members[name] = merge_rank(rows, rk, dossiers)
     ranks: dict[int, dict[str, tuple[int, int]]] = {}
     for name, rows in members.items():
-        for i, (_, n, _c) in enumerate(rows, 1):
+        for i, (_, n, c) in enumerate(rows, 1):
             ranks.setdefault(n, {})[name] = (i, len(rows))
+            if c.get("computed"):  # so the PR page's cards see the computed membership too
+                dossiers[n]["result"]["categories"].append(c)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project = cfg.raw.get("project", {}) or {}
     repo_url = project.get("repo_url")
@@ -522,18 +652,25 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
     for name, rows in sorted(members.items()):
         cat = cats.get(name)
         title = cat.title if cat else name
-        head = ('<table><colgroup><col class="c-pr"><col class="c-prio"><col class="c-rev"><col class="c-reviews"><col class="c-agree"><col class="c-size"></colgroup>'
-                '<thead><tr><th>PR</th><th>Priority</th><th>Reviewability</th><th>Reviews</th>'
-                '<th>Agreement</th><th>Size</th></tr></thead><tbody>')
-        body_rows = "".join(_row(recs[n], dossiers[n], c, name, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
+        computed = bool(cat and cat.computed)
+        head = _table_head("Judged" if computed else "Priority")
+        body_rows = "".join(_row(recs[n], dossiers[n], c, cats, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
         covers = (f'<div class="covers"><div class="src">Category definition: <a href="{_e(cat_src(name))}">{_e(repo_short)}/categories/{_e(name)}.md</a>'
                   + (f' · editor <a href="https://github.com/{_e(cat.owner)}">{_e(cat.owner)}</a>' if cat.owner else "") + '</div>'
                   f'{md_to_html(cat.body)}</div>') if cat else ""
-        callout = ('<div class="banner">Every band, state, and summary on this page is model output against a '
-                   'written category definition, shown with its rationale. It is an unofficial tool and does not speak for the '
-                   'project. Click any cell\'s summary text to expand the row; hover a cell for the same text.'
-                   + (f' The category definition lives in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>; '
-                      'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
+        if computed:
+            listed = ", ".join(f'<a href="{_e(x)}.html">{_e(cats[x].title if x in cats else x)}</a>' for x in cat.not_in)
+            callout = ('<div class="banner">This list is computed, not judged: it holds every assessed PR that the model placed in none of '
+                       f'{listed}. Each row\'s Judged column says which categories were asked about the PR and what they answered. '
+                       'A PR here may mean a definition has a gap, or may just be one that fits no category. '
+                       'Every state and summary in the other columns is model output, shown with its rationale. Click a row to expand it; hover a cell for the same text.'
+                       + (f' The list is defined in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>.' if repo_url else "") + '</div>')
+        else:
+            callout = ('<div class="banner">Every band, state, and summary on this page is model output against a '
+                       'written category definition, shown with its rationale. It is an unofficial tool and does not speak for the '
+                       'project. Click a row to expand it; hover a cell for the same text.'
+                       + (f' The category definition lives in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>; '
+                          'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
         rk = rank_info.get(name)
         rank_block = ""
         rank_line = ""
@@ -563,7 +700,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
     for n, d in dossiers.items():
         if not d.get("result") or n not in recs:
             continue
-        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {})), "full analysis",
+        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {}), legend),
                                                           nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
     repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     default_intro = (
@@ -573,11 +710,16 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         + (f' The definitions live in <a href="{_e(repo_url)}">{_e(repo_short)}</a> and can be changed by pull request. '
            'Anyone can volunteer to edit an existing category or create a new one.' if repo_url else ""))
     intro = '<div class="intro"><p>' + (_e(project["description"]) if project.get("description") else default_intro) + '</p></div>'
-    catlist = '<ul class="catlist">' + "".join(
-        f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a>'
-        + f' <span class="editor">· <a href="{_e(cat_src(name))}">definition</a>'
-        + (f', editor <a href="https://github.com/{_e(cats[name].owner)}">{_e(cats[name].owner)}</a>' if name in cats and cats[name].owner else "") + '</span></li>'
-        for name, rows in sorted(members.items(), key=lambda kv: (cats[kv[0]].title if kv[0] in cats else kv[0]).lower())) + "</ul>"
+    def cat_item(name: str, note: str = "") -> str:
+        return (f'<li><a href="{_e(name)}.html">{_e(cats[name].title if name in cats else name)}</a>'
+                + f' <span class="editor">· {note}<a href="{_e(cat_src(name))}">definition</a>'
+                + (f', editor <a href="https://github.com/{_e(cats[name].owner)}">{_e(cats[name].owner)}</a>' if name in cats and cats[name].owner else "") + '</span></li>')
+    by_title = sorted(members, key=lambda name: (cats[name].title if name in cats else name).lower())
+    catlist = '<ul class="catlist">' + "".join(cat_item(name) for name in by_title if not (name in cats and cats[name].computed)) + "</ul>"
+    computed_names = [name for name in by_title if name in cats and cats[name].computed]
+    if computed_names:
+        catlist += ('<div class="intro"><p>Computed lists, not model output:</p></div><ul class="catlist">'
+                    + "".join(cat_item(name, f'{len(members[name])} PRs · ') for name in computed_names) + "</ul>")
     engine_url = project.get("engine_url")
     feedback = ""
     if repo_url or engine_url:

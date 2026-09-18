@@ -244,6 +244,15 @@ stale_author_silent_days = 60
 pre-filter hints (`labels`, `paths`, `keywords`), then two sections: what
 the category covers, and what counts as important within it.
 
+A file with `kind: computed` and a `not_in` list of category names is a
+category the site computes instead of asking the model: its members are
+every assessed PR that belongs to none of the listed categories. It has
+no priority column; a "Judged" column shows which categories the model
+was asked about and the reason each gave. The judge, display, and rank
+stages never see it. Use it for an "Uncategorized" list that catches PRs
+falling through the definitions; only the categories it names count, so
+one-off categories can exist without shrinking it.
+
 `feedback/prs/<n>/<timestamp>-<login>.md` and
 `feedback/categories/<name>/<timestamp>-<login>.md`: one entry per file,
 front matter `author`, `author_id`, `date`, `pr`, `category`, `kind`
