@@ -97,12 +97,20 @@ tr.cards > td { padding: .6rem .5rem; background: #fafafa; }
 .cardset { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: .6rem; }
 table.card { width: 13%; min-width: 12rem; table-layout: fixed; background: #fff; }
 table.card tr.det .dwrap { grid-template-rows: 1fr; } /* a card is not a toggled row: always open, ordinary borders */
+/* PR page: the one row is always open and not a toggle, so no frame; the legend sits as a card at the right of the category cards. */
+table.static tr.row.open td, table.static tr.det.open td { border-color: var(--border); border-width: 1px; }
+table.static tr.det.open td { border-top: 0; } table.static tr.row.open td { border-bottom: 0; }
+table.static tr.open td:first-child { border-left: 1px solid var(--border); } table.static tr.open td:last-child { border-right: 1px solid var(--border); }
+.cardset .legend { margin-left: auto; align-self: flex-start; border-top: 1px solid var(--border); max-width: 38rem; }
+.prpage h3 { font-size: 1rem; margin: .8rem 0 .2rem; }
 table.card th { position: static; font-weight: 600; } table.card th .pos { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
 .legend { font-size: .8rem; color: var(--muted); background: #f7f7f7; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0; }
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
-a.loc { color: #999; margin-left: .2em; vertical-align: 15%; } a.loc:hover { color: var(--link); } a.loc svg { display: inline-block; }
+.ref { padding: 0 .1em; margin: 0 -.1em; border-radius: 3px; white-space: nowrap; }
+a.loc { color: #999; margin-left: .15em; vertical-align: -5%; } a.loc:hover { color: var(--link); } a.loc svg { display: inline-block; }
+.ref:has(a.loc:hover) { background: #eef2f7; box-shadow: 0 0 0 1px #c9d4e3; }
 @media (max-width: 1000px) {
   main { padding: .6rem .5rem 3rem; }
   table { font-size: .82rem; } th, td { padding: .3rem .35rem; }
@@ -195,8 +203,16 @@ def _local(n: int) -> str:
     if n not in _PR_CTX["pages"] or n == _PR_CTX["self"]:
         return ""
     return (f'<a class="loc" href="{_PR_CTX["prefix"]}{n}.html" title="#{n} on this site">'
-            '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 1.5h5l2 2v7h-7z" fill="none" stroke="currentColor"/>'
+            '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 1.5h5l2 2v7h-7z" fill="none" stroke="currentColor"/>'
             '<path d="M4.5 6h3M4.5 8h3" stroke="currentColor"/></svg></a>')
+
+
+def _ref(n: int, url: str, text: str) -> str:
+    """A PR reference: the GitHub link and, when the PR has a page here, the
+    page icon, wrapped as one unit so hovering the icon boxes both."""
+    loc = _local(n)
+    link = f'<a href="{url}">{text}</a>'
+    return f'<span class="ref">{link}{loc}</span>' if loc else link
 
 
 def _t(text) -> str:
@@ -206,7 +222,7 @@ def _t(text) -> str:
     def sub(m):
         repo, n = m.group(1), m.group(2)
         url = f"https://github.com/{repo}/pull/{n}" if repo else f"{_REPO_URL['url']}/pull/{n}"
-        return f'<a href="{url}">{m.group(0)}</a>' + ("" if repo else _local(int(n)))
+        return f'<a href="{url}">{m.group(0)}</a>' if repo else _ref(int(n), url, m.group(0))
     return _REF_RE.sub(sub, _e(text))
 
 
@@ -243,19 +259,36 @@ def _objections(ag: dict) -> str:
             replied = "yes" if o.get("author_replied") else "no"
             if o.get("author_replied_model") and not o.get("author_replied"):
                 replied = 'no <span class="muted">(model said yes)</span>'
-            rows.append(f'<tr><td>{_e(o.get("reviewer"))}</td><td>{_e(o.get("kind") or "")}</td><td>{_e(o.get("harm") or "")}</td>'
+            if o.get("fix_pushed"):
+                status += ' <span class="muted">· fix pushed</span>'
+            if o.get("pin"):
+                status += f' <span class="muted">· pinned by {_e(o["pin"].get("by"))}</span>'
+            who = _e(o.get("reviewer")) + (f' <span class="muted">({_e(o["association"].lower())})</span>' if o.get("association") else "")
+            quote = _t(o.get("evidence") or "")
+            if o.get("url"):
+                quote = f'<a href="{_e(o["url"])}">{_e((o.get("evidence") or "")[:10])}</a>' + _t((o.get("evidence") or "")[10:])
+            rows.append(f'<tr><td>{who}</td><td>{_e(o.get("kind") or "")}</td><td>{_e(o.get("harm") or "")}</td>'
                         f'<td>{status}</td><td>{"yes" if o.get("blocking") else "no"}</td><td>{replied}</td>'
-                        f'<td>{_t(o.get("evidence") or "")}' + (f'<br><span class="k">Settled:</span> {_t(o["resolution_evidence"])}' if o.get("resolution_evidence") else "") + '</td></tr>')
+                        f'<td>{quote}' + (f'<br><span class="k">Settled:</span> {_t(o["resolution_evidence"])}' if o.get("resolution_evidence") else "") + '</td></tr>')
         out.append('<p><span class="k">Objections:</span></p><div class="scroll"><table class="obj"><tr><th>Reviewer</th><th>Kind</th><th>Harm</th><th>Status</th><th>Blocking</th><th>Author replied</th><th>Quote</th></tr>'
                    + "".join(rows) + '</table></div>')
     else:
         out.append('<p><span class="k">Objections:</span> none enumerated.</p>')
     sup = ag.get("support") or []
     if sup:
-        out.append('<p><span class="k">Support:</span></p>' + _ul([f'{x.get("reviewer")}: {x.get("reason") or "(no reason given)"}' + ("" if x.get("substantive") else " [not substantive]") for x in sup]))
+        items = []
+        for x in sup:
+            when = (x.get("at") or "")[:10]
+            when_html = f'<a href="{_e(x["url"])}">{_e(when)}</a>' if x.get("url") and when else _e(when)
+            head = _e(x.get("reviewer")) + (f' <span class="muted">({_e(x["association"].lower())})</span>' if x.get("association") else "")
+            head += f' ({_e(x["verdict"])}, {when_html})' if x.get("verdict") else (f' ({when_html})' if when else "")
+            items.append(f'<li>{head}: {_t(x.get("reason") or "(no reason given)")}{"" if x.get("substantive") else " [not substantive]"}</li>')
+        out.append('<p><span class="k">Support:</span></p><ul>' + "".join(items) + '</ul>')
     parts = ag.get("participants") or []
     if parts:
-        out.append('<p><span class="k">Participants:</span> ' + ", ".join(f'{_e(x.get("login"))} ({_e(x.get("stance"))})' for x in parts) + '</p>')
+        out.append('<p><span class="k">Participants:</span></p>' + _ul([f'{x.get("login")} ({(x.get("association") or "none").lower()}, {x.get("stance")}'
+                                                                        + (f', {x["comments"]} statements {x.get("first")} to {x.get("last")}' if x.get("comments") else "") + ')'
+                                                                        + (f': {x["note"]}' if x.get("note") else "") for x in parts]))
     if ag.get("missing_participants"):
         out.append('<p><span class="k">Commenters the model did not classify:</span> ' + _e(", ".join(ag["missing_participants"])) + '</p>')
     if ag.get("corrections"):
@@ -450,7 +483,7 @@ def _pr_cells(rec: dict, d: dict, disp: dict | None, pr_href: str | None, toggle
     n = rec["number"]
     L = display_lines(disp, r, None)
     pr_brief = ((f'<span class="tg">(+)</span>' if toggle else "")
-                + f'<a href="{_e(rec["url"])}">#{n}</a>{_local(n)} <span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
+                + _ref(n, _e(rec["url"]), f"#{n}") + f' <span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
     pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>' if pr_href else ""
     rv = r["reviewability"]
     rv_style = f"background:{REVIEWABILITY_COLORS.get(rv['state'], '#fff')};"
@@ -503,7 +536,7 @@ def _row(rec: dict, d: dict, cat: dict, cats: dict, disp: dict | None, pr_href: 
     return _rows(cells, cls, anchor=f"pr-{rec['number']}")
 
 
-def _table_head(prio: str | None, toggle: bool = True) -> str:
+def _table_head(prio: str | None, toggle: bool = True, pr_label: str = "PR") -> str:
     """The table opening for the configured columns: ``prio`` is the priority
     column's header (None leaves that column out). Column widths are written
     per table so a config with extra columns still sums to 100%."""
@@ -513,12 +546,12 @@ def _table_head(prio: str | None, toggle: bool = True) -> str:
     style = ("<style>" + "".join(f'col.c-{c}{{width:{COLUMNS[c].get("width", 13)}%}}' for c in names if c != "pr") + f'col.c-pr{{width:{rest}%}}'
              + "@media (max-width:1000px){" + "".join(f'col.c-{c}{{width:{COLUMNS[c].get("narrow", 14)}%}}' for c in names if c != "pr") + f'col.c-pr{{width:{narrow}%}}' + "}</style>")
     cols = "".join(f'<col class="c-{c}">' for c in names)
-    heads = "".join(f'<th>{_e(prio if c == "prio" else COLUMNS[c]["label"])}</th>' for c in names)
-    cls = " ".join(x for x in ["toggle" if toggle else "", "" if prio else "noprio"] if x)
+    heads = "".join(f'<th>{_e(prio if c == "prio" else pr_label if c == "pr" else COLUMNS[c]["label"])}</th>' for c in names)
+    cls = " ".join(x for x in ["toggle" if toggle else "static", "" if prio else "noprio"] if x)
     return f'{style}<table class="{cls}"><colgroup>{cols}</colgroup><thead><tr>{heads}</tr></thead><tbody>'
 
 
-def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], merged: dict, ranked: set) -> str:
+def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], merged: dict, ranked: set, legend: str = "") -> str:
     """The category cards row of a PR page: for each category the PR is in,
     that category's priority cell as it appears on the category page (the
     entry merged with the ranking pass, so band and notes match), under the
@@ -541,67 +574,83 @@ def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, t
     if not cards:
         cards.append('<div class="sub">In no category.</div>')
     span = len([c for c in _CTX["columns"] if c != "prio"])
-    return f'<tr class="cards"><td colspan="{span}"><div class="cardset">{"".join(cards)}</div></td></tr>'
+    return f'<tr class="cards"><td colspan="{span}"><div class="cardset">{"".join(cards)}{legend}</div></td></tr>'
 
 
 def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], legend: str, merged: dict, ranked: set) -> str:
+    """The PR page: the table row with its category cards and the legend, then
+    the long analysis. Everything the table already shows (the display lines)
+    stays out of the sections below; each section carries what the table only
+    summarised, and the categories come last."""
     r = d["result"]
     n = rec["number"]
-    L = display_lines(disp, r, None)
     b = []
-    table = (_table_head(None, toggle=False) + _rows(_pr_cells(rec, d, disp, None, toggle=False), open=True, anchor=f"pr-{n}")
-             + _cards(rec, d, cats, disp, ranks, merged, ranked) + "</tbody></table>" + legend)
-    b.append(f'<p class="anchor"><a href="{_e(rec["url"])}">{_e(rec["url"])}</a> · <span class="author">{_e(rec["author"])}</span> · '
-             f'+{rec["additions"]}/-{rec["deletions"]} in {rec["changed_files"]} files, {rec["commit_count"]} commits · '
-             f'labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}</p>')
-    b.append(f'<h2>Goal</h2><div class="box">{_ul(L["goal"])}<p>{_t(r["summary"])}</p><p><span class="k">Problem:</span> {_t(r["problem"])}</p></div>')
+    table = (_table_head(None, toggle=False, pr_label="") + _rows(_pr_cells(rec, d, disp, None, toggle=False), open=True, anchor=f"pr-{n}")
+             + _cards(rec, d, cats, disp, ranks, merged, ranked, legend) + "</tbody></table>")
+    def sec(title: str, inner: str, anchor: str = "") -> None:
+        b.append(f'<h2{" id=" + chr(34) + anchor + chr(34) if anchor else ""}>{title}</h2><div class="box">{inner}</div>')
+    goal = f'<p>{_t(r["summary"])}</p><p><span class="k">Problem:</span> {_t(r["problem"])}</p>'
+    if r.get("evidence"):
+        goal += '<p><span class="k">Evidence of importance:</span></p>' + _ul(r["evidence"])
+    if r.get("scope_notes"):
+        goal += f'<p><span class="k">Scope:</span> {_t(r["scope_notes"])}</p>'
+    if r.get("changed_since_previous"):
+        goal += f'<p><span class="k">Changed since the previous assessment:</span> {_t(r["changed_since_previous"])}</p>'
+    if r.get("needs"):
+        goal += '<p><span class="k">What the assessment lacked:</span></p>' + _ul(r["needs"])
+    sec("Goal", goal, "goal")
+    rv = r["reviewability"]
+    rv_lead = rv["state"] if rv["label"].strip().lower() == rv["state"].lower() else f'{rv["state"]} · {rv["label"]}'
+    sec("Reviewability", f'<p class="lead">{_t(rv_lead)}</p><p>{_t(rv["reason"])}</p>', "reviewability")
+    ag = r["agreement"]
+    agree = f'<p class="lead">{_e(ag["state"])}</p>'
+    if ag.get("derivation"):
+        agree += f'<p>{_t(ag["derivation"])}</p>'
+    elif ag.get("summary"):
+        agree += f'<p>{_t(ag["summary"])}</p>'
+    if ag.get("notes"):
+        agree += f'<p><span class="k">Thread notes:</span> {_t(ag["notes"])}</p>'
+    elif ag.get("reason") and not ag.get("derivation"):
+        agree += f'<p>{_t(ag["reason"])}</p>'
+    agree += _objections(dict(ag, derivation=None))
+    sec("Agreement", agree, "agreement")
+    dep = r["dependencies"]
+    def nums(xs) -> str:
+        return ", ".join("#" + str(x).lstrip("#") for x in xs)
+    if dep["depends_on"] or dep["enables"] or rec["stack"]["based_on"] or rec["stack"]["base_for"]:
+        sec("Dependencies",
+            (f'<p><span class="k">Depends on:</span> {_t(nums(dep["depends_on"]))}</p>' if dep["depends_on"] else "")
+            + (f'<p><span class="k">Enables:</span>{_ul(dep["enables"])}</p>' if dep["enables"] else "")
+            + (f'<p><span class="k">Based on (shares commits with):</span> {_t(nums(rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
+            + (f'<p><span class="k">Base for:</span> {_t(nums(rec["stack"]["base_for"]))}</p>' if rec["stack"]["base_for"] else ""), "deps")
+    files = rec.get("files") or []
+    sec("Files", (f'<p>{rec["test_lines"]} lines under test/bench/ci.</p>' if rec.get("test_lines") is not None else "")
+        + (_ul(f'{x["path"]} +{x["add"]}/-{x["del"]}' for x in sorted(files, key=lambda x: -((x["add"] or 0) + (x["del"] or 0)))) if files else "<p>File list not available for this run.</p>"), "files")
+    if r["uncertainties"]:
+        sec("Uncertainties", _ul(r["uncertainties"]))
+    sec("Card", f'<p class="muted">The short text the ranking pass compares across PRs.</p><p>{_t(r["card"])}</p>')
+    th = r.get("thread") or {}
+    src = f' · display text: {_e(disp.get("source"))}' if disp and disp.get("synthetic") else ""
+    sec("Data", f'<a href="../data/dossier-{n}.json">dossier JSON</a> · <a href="../data/extract-{n}.json">extract JSON</a> · '
+        f'model {_e(d.get("model"))}, generated {_e((d.get("created") or "")[:16])}, confidence {_e(r["confidence"])}, input hash {_e(d.get("input_hash"))}{src}'
+        + (f'<br>thread read through {_e((th.get("last_event_at") or "")[:10])} ({th.get("events")} statements), head {_e((th.get("head_sha") or "")[:10])}' if th.get("last_event_at") else "")
+        + f'<br>labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}')
+    cat_secs = []
     for c in r["categories"]:
         if not c["member"] or c.get("computed"):
             continue
         c = merged.get((c["name"], n), c)
         f = c["factors"]
         title = cats[c["name"]].title if c["name"] in cats else c["name"]
-        pos, total = ranks.get(c["name"], (0, 0))
-        why = display_lines(disp, r, c)["why"]
         band = c.get("rank_band") or c["band"]
         lead_note = (f' <span class="muted">(assessed alone as {_e(c["dossier_band"])}; {_t(c["rank_note"])})</span>' if c.get("rank_band")
                      else (f' <span class="muted">(ranking pass: {_t(c["rank_note"])})</span>' if c.get("rank_note") else ""))
-        b.append(f'<h2 id="cat-{_e(c["name"])}">Category: <a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>'
-                 + (f' (#{pos} of {total})' if total else "") + '</h2>'
-                 f'<div class="box"><p class="lead">{_e(band)}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + f'{lead_note}</p>'
-                 f'{_ul(why)}<p>{_t(c["rationale"])}</p><p><span class="k">Membership:</span> {_t(c["evidence"])}</p>'
-                 f'<p><span class="k">Factors:</span> security/stability {f["security_stability"]}, bug {f["bug_severity"]}, performance {f["performance"]}, '
-                 f'user value {f["user_value"]}, leverage {f["leverage"]}</p></div>')
-    rv = r["reviewability"]
-    rv_title = rv["state"] if rv["label"].strip().lower() == rv["state"].lower() else f'{rv["state"]}: {rv["label"]}'
-    b.append(f'<h2 id="reviewability">Reviewability: {_e(rv_title)}</h2><div class="box">{_ul(L["reviewability"])}<p>{_t(rv["reason"])}</p>'
-             f'<p><span class="k">Author status:</span> {_t(r["discussion"]["author_status"])}</p>'
-             + (f'<p><span class="k">Open concerns:</span>{_ul(r["discussion"]["open_concerns"])}</p>' if r["discussion"]["open_concerns"] else "")
-             + (f'<p><span class="k">Resolved concerns:</span>{_ul(r["discussion"]["resolved_concerns"])}</p>' if r["discussion"]["resolved_concerns"] else "") + '</div>')
-    ag = r["agreement"]
-    rw_brief, rw_lines, rw_links, _ = _reviews(rec)
-    b.append(f'<h2 id="agreement">Agreement: {_e(ag["state"])}</h2><div class="box">{_ul(L["agreement"])}'
-             + (f'<p>{_t(ag["summary"])}</p>' if ag.get("summary") else "")
-             + f'<p>{_t(ag["reason"])}</p>{_ul(ag["evidence"])}' + _objections(ag)
-             + f'<p><span class="k">Review verdicts (DrahtBot):</span> {rw_brief}</p>{rw_links}</div>')
-    dep = r["dependencies"]
-    if dep["depends_on"] or dep["enables"] or rec["stack"]["based_on"] or rec["stack"]["base_for"]:
-        b.append('<h2 id="deps">Dependencies</h2><div class="box">'
-                 + (f'<p><span class="k">Depends on:</span> {_t(", ".join("#" + str(x) for x in dep["depends_on"]))}</p>' if dep["depends_on"] else "")
-                 + (f'<p><span class="k">Enables:</span>{_ul(dep["enables"])}</p>' if dep["enables"] else "")
-                 + (f'<p><span class="k">Based on (shares commits with):</span> {_t(", ".join("#" + str(x) for x in rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
-                 + (f'<p><span class="k">Base for:</span> {_t(", ".join("#" + str(x) for x in rec["stack"]["base_for"]))}</p>' if rec["stack"]["base_for"] else "") + '</div>')
-    files = rec.get("files") or []
-    b.append(f'<h2 id="files">Files</h2><div class="box">'
-             + (f'<p>{rec["test_lines"]} lines under test/bench/ci.</p>' if rec.get("test_lines") is not None else "")
-             + (_ul(f'{x["path"]} +{x["add"]}/-{x["del"]}' for x in sorted(files, key=lambda x: -((x["add"] or 0) + (x["del"] or 0)))) if files else "<p>File list not available for this run.</p>") + '</div>')
-    if r["uncertainties"]:
-        b.append(f'<h2>Uncertainties</h2><div class="box">{_ul(r["uncertainties"])}</div>')
-    b.append(f'<h2>Card</h2><div class="box"><p>{_t(r["card"])}</p></div>')
-    src = f' · display text: {_e(disp.get("source"))}' if disp and disp.get("synthetic") else ""
-    b.append(f'<h2>Data</h2><div class="box"><a href="../data/dossier-{n}.json">dossier JSON</a> · <a href="../data/extract-{n}.json">extract JSON</a> · '
-             f'model {_e(d.get("model"))}, generated {_e((d.get("created") or "")[:16])}, confidence {_e(r["confidence"])}, '
-             f'input hash {_e(d.get("input_hash"))}{src}</div>')
+        cat_secs.append(f'<h3 id="cat-{_e(c["name"])}">{_e(title)}</h3><div class="box"><p class="lead">{_e(band)}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + f'{lead_note}</p>'
+                        f'<p>{_t(c["rationale"])}</p><p><span class="k">Membership:</span> {_t(c["evidence"])}</p>'
+                        + (f'<p><span class="k">Factors:</span> security/stability {f["security_stability"]}, bug {f["bug_severity"]}, performance {f["performance"]}, '
+                           f'user value {f["user_value"]}, leverage {f["leverage"]}</p>' if f else "") + '</div>')
+    if cat_secs:
+        b.append('<h2 id="categories">Categories</h2>' + "".join(cat_secs))
     return table + '<div class="prpage">' + "".join(b) + "</div>"
 
 
@@ -842,11 +891,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
                 + f' <span class="editor">· {note}<a href="{_e(cat_src(name))}">definition</a>'
                 + (f', editor <a href="https://github.com/{_e(cats[name].owner)}">{_e(cats[name].owner)}</a>' if name in cats and cats[name].owner else "") + '</span></li>')
     by_title = sorted(members, key=lambda name: (cats[name].title if name in cats else name).lower())
-    catlist = '<ul class="catlist">' + "".join(cat_item(name) for name in by_title if not (name in cats and cats[name].computed)) + "</ul>"
-    computed_names = [name for name in by_title if name in cats and cats[name].computed]
-    if computed_names:
-        catlist += ('<div class="intro"><p>Computed lists, not model output:</p></div><ul class="catlist">'
-                    + "".join(cat_item(name, f'{len(members[name])} PRs · ') for name in computed_names) + "</ul>")
+    catlist = '<ul class="catlist">' + "".join(cat_item(name) for name in by_title) + "</ul>"
     engine_url = project.get("engine_url")
     feedback = ""
     if repo_url or engine_url:

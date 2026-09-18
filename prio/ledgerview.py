@@ -66,14 +66,16 @@ def _agreement(record: dict) -> dict:
         lines.append(f"{c['author']} ({c['kind']}, {'blocking' if c.get('blocking') else 'nonblocking'}{', no author reply' if not c.get('author_replies') else ''}): {c.get('harm') or ''}")
     for s in record["support"]:
         lines.append(f"{s['author']}: {s.get('verdict') or 'support'}{' — ' + s['reason'] if s.get('reason') else ''}")
-    objections = [{"reviewer": c["author"], "kind": c.get("kind"), "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
+    objections = [{"reviewer": c["author"], "association": c.get("association"), "kind": c.get("kind"), "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
                    "author_replied": bool(c.get("author_replies")), "fix_pushed": bool(c.get("fix")), "status": c.get("status"),
                    "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": c["id"],
                    "resolution_evidence": (f"{c['settled_by'].get('at')}: {c['settled_by'].get('by')}: '{c['settled_by'].get('quote', '')}'" if c.get("settled_by") else ""),
                    "pin": c.get("pin")} for c in record["claims"]]
-    support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url")}
+    support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url"),
+                "at": s.get("at"), "association": s.get("association")}
                for s in record["support"]]
-    participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or "", "association": p.get("association")} for p in record["participants"]]
+    participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or "", "association": p.get("association"),
+                     "comments": p.get("comments"), "first": p.get("first"), "last": p.get("last")} for p in record["participants"]]
     summary = f"{state}: {why}"
     reason = record.get("notes") or ("Derived from the claims and support below; every entry links to the statement it came from.")
     return {"state": state, "summary": summary, "reason": reason, "evidence": lines, "objections": objections, "support": support,
@@ -112,7 +114,8 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
                        "score": float(j.get("score") or 0), "factors": j.get("factors") or {}, "rationale": j.get("rationale") or ""} for j in judgments]
         result = {
             "summary": code.get("summary") or "", "problem": code.get("problem") or "", "card": code.get("card") or "",
-            "evidence": code.get("evidence") or [], "scope_notes": code.get("scope_notes") or "",
+            "evidence": code.get("evidence") or [], "scope_notes": code.get("scope_notes") or "", "changed_since_previous": code.get("changed_since_previous") or "",
+            "thread": {"last_event_at": record["processed"].get("last_event_at"), "events": len(record["processed"].get("events") or []), "head_sha": record["processed"].get("head_sha")},
             "discussion": _discussion(record),
             "reviewability": derive_reviewability(rec, record, cfg),
             "agreement": _agreement(record),
