@@ -72,7 +72,7 @@ def _agreement(record: dict) -> dict:
                    "resolution_evidence": (f"{c['settled_by'].get('at')}: {c['settled_by'].get('by')}: '{c['settled_by'].get('quote', '')}'" if c.get("settled_by") else ""),
                    "pin": c.get("pin")} for c in record["claims"]]
     support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url"),
-                "at": s.get("at"), "association": s.get("association")}
+                "at": s.get("at"), "association": s.get("association"), "evidence": s.get("evidence"), "areas": s.get("areas") or []}
                for s in record["support"]]
     participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or "", "association": p.get("association"),
                      "comments": p.get("comments"), "first": p.get("first"), "last": p.get("last")} for p in record["participants"]]
@@ -116,6 +116,7 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
             "summary": code.get("summary") or "", "problem": code.get("problem") or "", "card": code.get("card") or "",
             "evidence": code.get("evidence") or [], "scope_notes": code.get("scope_notes") or "", "changed_since_previous": code.get("changed_since_previous") or "",
             "thread": {"last_event_at": record["processed"].get("last_event_at"), "events": len(record["processed"].get("events") or []), "head_sha": record["processed"].get("head_sha")},
+            "waiting_on": record.get("waiting_on") or [],
             "discussion": _discussion(record),
             "reviewability": derive_reviewability(rec, record, cfg),
             "agreement": _agreement(record),

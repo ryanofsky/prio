@@ -47,7 +47,26 @@ Support. One entry per statement speaking for the change: the verdict
 word if any (Concept ACK, Approach ACK, ACK, Tested ACK, or none), the
 reason in the reviewer's words, and whether a specific reason is given.
 Approvals with no rationale from accounts with no history in the project
-are not support.
+are not support. Also say what the statement shows the reviewer did:
+`evidence` is `none` for a verdict with nothing specific ("ACK abc123",
+"LGTM"), `read` when it discusses specific code, commits, or design
+points of this change (a bare hash is not evidence of reading; a remark
+about a particular function or commit is), `tested` when it says the
+reviewer built, ran, or exercised the change but does not discuss the
+code (common for bug fixes and performance changes), `both` when it
+shows both. In
+`areas`, list the files, directories, or parts of the change the
+statement mentions having looked at, as written; empty when none.
+
+Waiting on. From the last statements, say what the PR is waiting on
+right now, as a list, one entry per thing: `author` (a requested change,
+an unanswered question, a rebase), `reviewer` (the author answered or
+pushed and is waiting for someone to look again, or asked a reviewer a
+question), `decision` (a design question nobody has settled), or
+`nothing` (no one is asked for anything). A PR can wait on several
+things; give each with a few words on what is awaited and the id of the
+statement that shows it. Use `nothing` alone only when nothing is
+pending.
 
 Participants. One entry per person in the participants list you are
 given (reviewers and commenters; never the PR author), with a stance: objection if any of their statements names a cost
@@ -59,5 +78,6 @@ Some entries in the record are marked PINNED: a person set that status.
 Do not change a pinned status unless a statement dated after the pin
 settles or reopens it, and say so in the notes.
 
-Return the full record: participants, claims, support, and notes (one or
-two sentences on what changed and anything you were unsure about).
+Return the full record: participants, claims, support, waiting_on, and
+notes (one or two sentences on what changed and anything you were unsure
+about).

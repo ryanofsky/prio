@@ -26,6 +26,8 @@ SCHEMA = 1
 CLAIM_KINDS = ["safety", "correctness", "approach", "scope", "interface", "maintenance", "usefulness", "style"]
 CLAIM_STATUS = ["open", "resolved", "agreed_to_disagree"]
 STANCES = ["objection", "support", "question", "neutral"]
+REVIEW_EVIDENCE = ["none", "read", "tested", "both"]
+WAITING_ON = ["author", "reviewer", "decision", "nothing"]
 HISTORY_LIMIT = 50
 LOG_LIMIT = 50
 
@@ -53,6 +55,7 @@ def new_record(rec: dict) -> dict:
         "participants": [],
         "claims": [],
         "support": [],
+        "waiting_on": [],
         "log": [],
     }
 
@@ -223,21 +226,27 @@ THREAD_SCHEMA = {
                 "settled_by_quote": {"type": "string", "description": "short quote from that statement; empty when open"},
             }}},
         "support": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["id", "verdict", "reason", "substantive"],
+            "type": "object", "additionalProperties": False, "required": ["id", "verdict", "reason", "substantive", "evidence", "areas"],
             "properties": {"id": {"type": "string"}, "verdict": {"type": "string", "description": "Concept ACK, Approach ACK, ACK, Tested ACK, or empty"},
-                           "reason": {"type": "string"}, "substantive": {"type": "boolean"}}}},
+                           "reason": {"type": "string"}, "substantive": {"type": "boolean"},
+                           "evidence": {"type": "string", "enum": REVIEW_EVIDENCE,
+                                        "description": "what the statement shows the reviewer did: none = a verdict with nothing specific; read = discusses specific code, commits, or design points of this change; tested = ran, built, or exercised it without discussing the code; both = did both"},
+                           "areas": {"type": "array", "items": {"type": "string"},
+                                     "description": "files, directories, or parts of the change the statement mentions having looked at; empty when none"}}}},
+        "waiting_on": {"type": "array", "description": "what the PR is waiting on right now, as of the last statements; several entries when it waits on several things; one entry with on=nothing when nothing is pending",
+                       "items": {"type": "object", "additionalProperties": False, "required": ["on", "what", "id"],
+                                 "properties": {"on": {"type": "string", "enum": WAITING_ON},
+                                                "what": {"type": "string", "description": "a few words: what is awaited and from whom"},
+                                                "id": {"type": "string", "description": "id of the statement that shows it, or empty"}}}},
         "notes": {"type": "string"},
     },
 }
 
 
-def _engine_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
 def thread_system() -> list[dict]:
-    text = ((_engine_root() / "prompts" / "thread.md").read_text().strip() + "\n\n---\n\n# Definition: agreement.md\n\n"
-            + (_engine_root() / "definitions" / "agreement.md").read_text().strip())
+    from . import texts
+    text = (texts.read("prompts/thread.md").strip() + "\n\n---\n\n# Definition: agreement.md\n\n"
+            + texts.read("definitions/agreement.md").strip())
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
@@ -424,7 +433,9 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
             continue
         support.append({"id": i, "hash": e.get("hash"), "url": e.get("url"), "author": e.get("who"), "association": e.get("assoc") or "NONE",
                         "at": _date_of(by_id, i), "verdict": s.get("verdict") or "", "reason": (s.get("reason") or "")[:300],
-                        "substantive": bool(s.get("substantive"))})
+                        "substantive": bool(s.get("substantive")),
+                        "evidence": s.get("evidence") if s.get("evidence") in REVIEW_EVIDENCE else "none",
+                        "areas": [str(a)[:80] for a in (s.get("areas") or [])][:12]})
     before = {x["id"] for x in record["support"]}
     after = {x["id"] for x in support}
     for i in sorted(after - before):
@@ -452,6 +463,20 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
             parts.append({"login": login, "association": c["assoc"], "stance": "neutral", "note": "(not classified by the model)",
                           "comments": c["n"], "first": c["first"], "last": c["last"]})
     record["participants"] = parts
+    waiting = []
+    for w in resp.get("waiting_on") or []:
+        if w.get("on") not in WAITING_ON:
+            rejected.append(f"waiting_on: unknown value {w.get('on')!r}")
+            continue
+        sid = w.get("id") or ""
+        if sid and sid not in by_id:
+            checks.append(f"waiting_on {w['on']}: statement {sid} not in this PR; kept without an anchor")
+            sid = ""
+        waiting.append({"on": w["on"], "what": (w.get("what") or "")[:200], "id": sid, "url": by_id[sid].get("url") if sid else None,
+                        "at": _date_of(by_id, sid) if sid else None})
+    if [(x["on"], x["what"]) for x in waiting] != [(x.get("on"), x.get("what")) for x in record.get("waiting_on") or []]:
+        changes.append("waiting on: " + (", ".join(f"{x['on']} ({x['what']})" if x["what"] else x["on"] for x in waiting) or "nothing recorded"))
+    record["waiting_on"] = waiting
     if resp.get("notes"):
         record["notes"] = resp["notes"][:500]
     return {"changes": changes, "rejected": rejected, "checks": checks}
@@ -502,7 +527,20 @@ def merge_responses(a: dict, b: dict) -> dict:
             if k not in support:
                 support[k] = dict(x)
             else:
-                support[k]["substantive"] = bool(support[k].get("substantive") or x.get("substantive"))
+                m = support[k]
+                m["substantive"] = bool(m.get("substantive") or x.get("substantive"))
+                seen = {m.get("evidence"), x.get("evidence")} - {None, "none"}
+                if "both" in seen or seen == {"read", "tested"}:
+                    m["evidence"] = "both"
+                elif seen:
+                    m["evidence"] = seen.pop()
+                m["areas"] = sorted(set(m.get("areas") or []) | set(x.get("areas") or []))
+    waiting: dict[tuple, dict] = {}
+    for read in (a, b):
+        for x in read.get("waiting_on") or []:
+            k = (x.get("on"), (x.get("what") or "").strip().lower())
+            if k not in waiting and x.get("on") != "nothing":
+                waiting[k] = dict(x)
     parts: dict[str, dict] = {}
     for read in (a, b):
         for x in read.get("participants") or []:
@@ -510,4 +548,5 @@ def merge_responses(a: dict, b: dict) -> dict:
             if k not in parts or _stance_rank(x.get("stance")) > _stance_rank(parts[k].get("stance")):
                 parts[k] = dict(x)
     notes = " / ".join(x for x in (a.get("notes"), b.get("notes")) if x)
-    return {"participants": list(parts.values()), "claims": list(claims.values()), "support": list(support.values()), "notes": notes}
+    return {"participants": list(parts.values()), "claims": list(claims.values()), "support": list(support.values()),
+            "waiting_on": list(waiting.values()) or [{"on": "nothing", "what": "", "id": ""}], "notes": notes}

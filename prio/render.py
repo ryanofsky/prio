@@ -282,6 +282,8 @@ def _objections(ag: dict) -> str:
             when_html = f'<a href="{_e(x["url"])}">{_e(when)}</a>' if x.get("url") and when else _e(when)
             head = _e(x.get("reviewer")) + (f' <span class="muted">({_e(x["association"].lower())})</span>' if x.get("association") else "")
             head += f' ({_e(x["verdict"])}, {when_html})' if x.get("verdict") else (f' ({when_html})' if when else "")
+            if x.get("evidence") and x["evidence"] != "none":
+                head += f' <span class="muted">[{_e(x["evidence"])}' + (f': {_e(", ".join(x["areas"]))}' if x.get("areas") else "") + ']</span>'
             items.append(f'<li>{head}: {_t(x.get("reason") or "(no reason given)")}{"" if x.get("substantive") else " [not substantive]"}</li>')
         out.append('<p><span class="k">Support:</span></p><ul>' + "".join(items) + '</ul>')
     parts = ag.get("participants") or []
@@ -601,7 +603,13 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     sec("Goal", goal, "goal")
     rv = r["reviewability"]
     rv_lead = rv["state"] if rv["label"].strip().lower() == rv["state"].lower() else f'{rv["state"]} · {rv["label"]}'
-    sec("Reviewability", f'<p class="lead">{_t(rv_lead)}</p><p>{_t(rv["reason"])}</p>', "reviewability")
+    waiting = r.get("waiting_on") or []
+    wait_html = ""
+    if waiting:
+        wait_html = '<p><span class="k">Waiting on (from the thread read):</span></p><ul>' + "".join(
+            f'<li>{_e(w["on"])}' + (f': {_t(w["what"])}' if w.get("what") else "") + (f' <a href="{_e(w["url"])}">{_e((w.get("at") or "")[:10] or "link")}</a>' if w.get("url") else "") + '</li>'
+            for w in waiting) + '</ul>'
+    sec("Reviewability", f'<p class="lead">{_t(rv_lead)}</p><p>{_t(rv["reason"])}</p>{wait_html}', "reviewability")
     ag = r["agreement"]
     agree = f'<p class="lead">{_e(ag["state"])}</p>'
     if ag.get("derivation"):
