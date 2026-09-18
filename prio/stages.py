@@ -181,8 +181,11 @@ def candidates(rec: dict, cats: list[Category]) -> list[Category]:
 
 
 def judge_user(rec: dict, record: dict, code: dict, cands: list[Category]) -> str:
+    files = rec.get("files") or []
+    top = sorted(files, key=lambda f: -((f.get("add") or 0) + (f.get("del") or 0)))[:40]
     meta = {"number": rec["number"], "title": rec["title"], "author": rec["author"], "labels": rec["labels"],
-            "size": f"+{rec['additions']}/-{rec['deletions']} in {rec['changed_files']} files", "draft": rec["draft"], "created": rec["created_at"][:10]}
+            "size": f"+{rec['additions']}/-{rec['deletions']} in {rec['changed_files']} files", "draft": rec["draft"], "created": rec["created_at"][:10],
+            "changed_files": [f"{f['path']} +{f.get('add') or 0}/-{f.get('del') or 0}" for f in top] + ([f"... {len(files) - 40} more"] if len(files) > 40 else [])}
     desc = {k: code.get(k) for k in ("summary", "problem", "evidence", "dependencies", "scope_notes", "confidence")}
     claims = [f"{c['author']} ({(c.get('association') or 'none').lower()}), {c['kind']}, {c['status']}{', blocking' if c.get('blocking') else ''}: {c.get('harm') or ''}"
               for c in record["claims"] if c.get("status") == "open"]
