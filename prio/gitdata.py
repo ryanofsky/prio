@@ -99,6 +99,11 @@ def pr_data(repo: Path, n: int, head: str, default_branch: str, budget_chars: in
     base = _git(repo, "merge-base", f"refs/prio/{default_branch}", ref).strip()
     rng = f"{base}..{ref}"
     files = _numstat(repo, rng)
+    # git patch-id --stable over the whole merge-base diff: unchanged by a
+    # rebase that leaves the diff alone, changed by any edit to it.
+    diff = subprocess.run(["git", "-C", str(repo), "diff", rng], capture_output=True, text=True, check=True).stdout
+    pid = subprocess.run(["git", "-C", str(repo), "patch-id", "--stable"], input=diff, capture_output=True, text=True, check=True).stdout
+    patch_id = pid.split()[0][:16] if pid.strip() else None
     test_lines = sum((f["add"] or 0) + (f["del"] or 0) for f in files if f["path"].startswith(TEST_PREFIXES))
     commits = []
     for line in _git(repo, "log", "--reverse", "--format=%H%x00%s", rng).splitlines():
@@ -124,7 +129,7 @@ def pr_data(repo: Path, n: int, head: str, default_branch: str, budget_chars: in
         parts.append(p)
         used += len(p)
     return {
-        "number": n, "head": actual, "head_matches_backup": actual == head, "base": base,
+        "number": n, "head": actual, "head_matches_backup": actual == head, "base": base, "patch_id": patch_id,
         "files": files, "test_lines": test_lines, "commits": commits,
         "patch": "".join(parts), "patch_chars": used, "patch_truncated": truncated,
         "patch_omitted_files": omitted,

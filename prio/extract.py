@@ -46,6 +46,23 @@ def _dt(s: str | None) -> datetime | None:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def _ehash(text) -> str:
+    """Short hash of a comment or description body as GitHub stores it (before
+    cleaning), so an edit is detectable even when it changes only quoted or
+    trimmed parts."""
+    return hashlib.sha256((text or "").encode()).hexdigest()[:16]
+
+
+def _ident(prefix: str, obj: dict) -> dict:
+    """Stable identity for a timeline event: id (c: comment, r: review, rc:
+    inline review comment), the GitHub URL, a hash of the body, and the
+    edit time when the body was edited after posting."""
+    created = obj.get("created_at") or obj.get("submitted_at")
+    updated = obj.get("updated_at")
+    return {"id": f"{prefix}:{obj.get('id')}", "url": obj.get("html_url"), "hash": _ehash(obj.get("body")),
+            "edited": updated if updated and created and updated > created else None}
+
+
 def clean_text(text: str | None) -> str:
     """Drop quoted lines, HTML comments, and runs of blank lines."""
     if not text:
@@ -167,7 +184,7 @@ class Extractor:
                     continue
                 timeline.append({"t": t, "kind": "comment", "who": who,
                                  "assoc": ev.get("author_association"),
-                                 "text": clean_text(ev.get("body"))})
+                                 "text": clean_text(ev.get("body")), **_ident("c", ev)})
             elif kind == "reviewed":
                 if _is_bot(who, user, cfg):
                     continue
@@ -178,7 +195,7 @@ class Extractor:
                 timeline.append({"t": t, "kind": "review", "who": who,
                                  "assoc": ev.get("author_association"),
                                  "state": state, "commit": ev.get("commit_id"),
-                                 "text": text})
+                                 "text": text, **_ident("r", ev)})
             elif kind == "committed":
                 commits.append({"sha": ev.get("sha"),
                                 "date": ((ev.get("committer") or {}).get("date")),
@@ -186,7 +203,7 @@ class Extractor:
             elif kind == "head_ref_force_pushed":
                 head_history.append({"t": t, "sha": ev.get("commit_id")})
                 timeline.append({"t": t, "kind": "force_push", "who": who,
-                                 "commit": ev.get("commit_id")})
+                                 "commit": ev.get("commit_id"), "id": f"push:{ev.get('commit_id')}"})
             elif kind in ("labeled", "unlabeled"):
                 labels_log.append({"t": t, "action": kind,
                                    "label": (ev.get("label") or {}).get("name"), "who": who})
@@ -208,7 +225,7 @@ class Extractor:
             timeline.append({"t": c.get("created_at"), "kind": "review_comment", "who": who,
                              "assoc": c.get("author_association"), "path": path,
                              "commit": c.get("commit_id"), "in_reply_to": c.get("in_reply_to_id"),
-                             "text": clean_text(c.get("body"))})
+                             "text": clean_text(c.get("body")), **_ident("rc", c)})
 
         timeline.sort(key=lambda e: e.get("t") or "")
 
@@ -272,6 +289,7 @@ class Extractor:
             "author_association": pull.get("author_association"),
             "created_at": pull.get("created_at"),
             "updated_at": pull.get("updated_at"),
+            "description_hash": _ehash(pull.get("body")),
             "age_days": days_since(pull.get("created_at")),
             "draft": bool(pull.get("draft")),
             "labels": label_names,
@@ -363,8 +381,13 @@ def input_hash(rec: dict) -> str:
     Excludes the day-relative fields (ages and day counts) so a quiet PR does
     not look changed every morning.
     """
-    skip = {"age_days", "input_hash", "extracted_at", "labels_log"}
+    skip = {"age_days", "input_hash", "extracted_at", "labels_log", "description_hash", "patch_id"}
     d = {k: v for k, v in rec.items() if k not in skip}
+    # Event identity (id, url, body hash, edit time) is for the ledger's delta
+    # detection; excluding it keeps existing dossiers valid.
+    d["timeline"] = [{k: v for k, v in e.items() if k not in ("id", "url", "hash", "edited")} for e in rec["timeline"]]
+    if rec.get("git"):
+        d["git"] = {k: v for k, v in rec["git"].items() if k != "patch_id"}
     d["signals"] = {k: v for k, v in rec["signals"].items() if not k.endswith("_days")}
     # Volatile bot-maintained facts churn daily without changing what a
     # reader would conclude; the site shows them straight from the extract.
@@ -411,6 +434,7 @@ def merge_git(rec: dict, git_dir: Path | None) -> None:
     rec["files"] = []
     rec["test_lines"] = None
     rec["git"] = None
+    rec["patch_id"] = None
     if not git_dir:
         return
     p = git_dir / f"{rec['number']}.json"
@@ -421,7 +445,8 @@ def merge_git(rec: dict, git_dir: Path | None) -> None:
     rec["files"] = g["files"]
     rec["changed_paths"] = [x["path"] for x in g["files"]]
     rec["test_lines"] = g["test_lines"]
-    rec["git"] = {"head": g["head"], "head_matches_backup": g["head_matches_backup"], "base": g["base"],
+    rec["patch_id"] = g.get("patch_id")
+    rec["git"] = {"head": g["head"], "head_matches_backup": g["head_matches_backup"], "base": g["base"], "patch_id": g.get("patch_id"),
                   "commits": [{"sha": c["sha"][:10], "subject": c["subject"], "files": len(c["files"]), "add": c["add"], "del": c["del"]} for c in g["commits"]],
                   "patch_truncated": g["patch_truncated"]}
 
