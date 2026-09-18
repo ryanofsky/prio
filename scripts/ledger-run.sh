@@ -16,6 +16,9 @@ set -euo pipefail
 D=${PRIO_DATA_ROOT:-/var/lib/prio}; L=${PRIO_LEDGER:-$D/data}; OUT=${PRIO_SITE_OUT:-$D/site/staging}
 MODEL=${PRIO_MODEL:-openrouter/google/gemini-3.8-flash}; RANK=${PRIO_RANK_DIR:-$L/rank}
 cd "$D"
+# One run at a time: a second start while a run holds the lock exits at once.
+exec 9>"$D/ledger-run.lock"
+if ! flock -n 9; then echo "another ledger run holds $D/ledger-run.lock; exiting" >&2; exit 75; fi
 export HOME=$D PYTHONPATH=$D/src/engine PRIO_OPENROUTER_WORKERS=${PRIO_OPENROUTER_WORKERS:-4}
 [ -r "$D/api-key" ] && export ANTHROPIC_API_KEY="$(cat "$D/api-key")"
 [ -r "$D/openrouter-key" ] && export OPENROUTER_API_KEY="$(cat "$D/openrouter-key")"

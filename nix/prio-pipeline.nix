@@ -102,7 +102,7 @@ let
   '';
   ledgerScript = pkgs.writeShellScript "prio-ledger" ''
     set -euo pipefail
-    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert pkgs.hostname ]}:$PATH"
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert pkgs.hostname pkgs.util-linux ]}:$PATH"
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     export PRIO_DATA_ROOT=${cfg.dataDir}
     export PRIO_LEDGER=${cfg.dataDir}/data
