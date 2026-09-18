@@ -100,6 +100,20 @@ let
     log "done"
     mark "done: site published"
   '';
+  ledgerScript = pkgs.writeShellScript "prio-ledger" ''
+    set -euo pipefail
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert pkgs.hostname ]}:$PATH"
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export PRIO_DATA_ROOT=${cfg.dataDir}
+    export PRIO_LEDGER=${cfg.dataDir}/data
+    export PRIO_SITE_OUT=${lib.escapeShellArg (if cfg.ledger.shadow then "${cfg.siteDir}/staging" else cfg.siteDir)}
+    export PRIO_MODEL=${cfg.model} PRIO_DISPLAY_MODEL=${cfg.displayModel} PRIO_PATCH_CHARS=${toString cfg.patchChars}
+    export PRIO_READS=${toString cfg.ledger.reads} PRIO_OPENROUTER_WORKERS=${toString cfg.openrouterWorkers}
+    export PRIO_BACKUP=${lib.escapeShellArg cfg.backupDir}
+    ${lib.optionalString (cfg.projectRepo != null) "export PRIO_PROJECT_REPO=${lib.escapeShellArg cfg.projectRepo}"}
+    ${lib.optionalString cfg.ledger.shadow "export PRIO_SKIP_EXTRACT=1"}
+    exec bash ${cfg.dataDir}/src/engine/scripts/ledger-run.sh
+  '';
   rankScript = pkgs.writeShellScript "prio-rank" ''
     set -euo pipefail
     export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.rsync pkgs.cacert ]}:$PATH"
@@ -114,9 +128,16 @@ let
     mark() { echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"; prio status-page --data-dir "$D" --site-dir ${lib.escapeShellArg cfg.siteDir} --next-runs ${lib.escapeShellArg cfg.scheduleText} >/dev/null 2>&1 || true; }
     : > "$D/status/current.log"; mark "ranking pass started"
     echo "[$(date -u +%FT%TZ)] rank (only categories changed since last pass)"
+    ${if (cfg.ledger.enable && !cfg.ledger.shadow) then ''
+    prio rank --extract "$D/extract" --data "$D/data" --display "$D/data/display" --out "$D/data/rank" --model ${cfg.rankModel} --effort ${cfg.rankEffort}
+    echo "[$(date -u +%FT%TZ)] render"
+    prio render --extract "$D/extract" --data "$D/data" --display "$D/data/display" --rank "$D/data/rank" --out "$D/site.new"
+    git -C "$D/data" add -A && git -C "$D/data" commit --quiet -m "ranking pass $(date -u +%F)" || true
+    '' else ''
     prio rank --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --out "$D/rank" --model ${cfg.rankModel} --effort ${cfg.rankEffort}
     echo "[$(date -u +%FT%TZ)] render"
     prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
+    ''}
     rsync -a --delete --exclude status.html --exclude status.json --exclude status/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     echo "[$(date -u +%FT%TZ)] done"
     mark "done: ranking published"
@@ -124,6 +145,12 @@ let
 in
 {
   options.services.prio = {
+    ledger = {
+      enable = lib.mkOption { type = lib.types.bool; default = false; description = "run the ledger pipeline (scripts/ledger-run.sh): incremental PR records in ${cfg.dataDir}/data"; };
+      shadow = lib.mkOption { type = lib.types.bool; default = true; description = "true: render to siteDir/staging and reuse the daily run's extract (the old pipeline keeps the live site); false: the ledger pipeline is the daily run and renders the live site"; };
+      reads = lib.mkOption { type = lib.types.int; default = 2; description = "seed reads per new PR, merged by union"; };
+      onCalendar = lib.mkOption { type = lib.types.str; default = "*-*-* 02:30:00"; description = "ledger run schedule (shadow mode: after the daily run)"; };
+    };
     agreementReads = lib.mkOption { type = lib.types.int; default = 1; description = "2 = a second, thread-only read of the agreement merged by union (catches omitted objections; ~40% more dossier cost)"; };
     rankModel = lib.mkOption { type = lib.types.str; default = "claude-opus-5"; };
     rankEffort = lib.mkOption { type = lib.types.str; default = "high"; };
@@ -157,7 +184,19 @@ in
       "d ${cfg.dataDir} 0755 ${cfg.user} ${cfg.user} -"
       "d ${cfg.siteDir} 0755 ${cfg.user} ${cfg.user} -"
     ];
-    systemd.services.prio = {
+    systemd.services.prio-ledger = lib.mkIf cfg.ledger.enable {
+      description = "prio ledger pipeline: deltas, thread reads, code and judgments, render" + (if cfg.ledger.shadow then " (shadow, to staging/)" else "");
+      after = [ "network-online.target" ] ++ lib.optional cfg.ledger.shadow "prio.service";
+      wants = [ "network-online.target" ];
+      unitConfig.ConditionPathExists = cfg.apiKeyFile;
+      serviceConfig = { Type = "oneshot"; User = cfg.user; Group = cfg.user; ExecStart = ledgerScript; TimeoutStartSec = "8h"; Nice = 10; };
+    };
+    systemd.timers.prio-ledger = lib.mkIf cfg.ledger.enable {
+      description = "daily prio ledger pipeline";
+      wantedBy = [ "timers.target" ];
+      timerConfig = { OnCalendar = if cfg.ledger.shadow then cfg.ledger.onCalendar else cfg.onCalendar; Persistent = true; RandomizedDelaySec = "10m"; };
+    };
+    systemd.services.prio = lib.mkIf (!(cfg.ledger.enable && !cfg.ledger.shadow)) {
       description = "prio pipeline: extract, assess, render";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -171,7 +210,7 @@ in
         Nice = 10;
       };
     };
-    systemd.timers.prio = {
+    systemd.timers.prio = lib.mkIf (!(cfg.ledger.enable && !cfg.ledger.shadow)) {
       description = "daily prio pipeline";
       wantedBy = [ "timers.target" ];
       timerConfig = { OnCalendar = cfg.onCalendar; Persistent = true; RandomizedDelaySec = "10m"; };
