@@ -152,4 +152,6 @@ def cmd_show(data_dir: Path, repo: str, n: int) -> str:
         return f"no record for {repo}#{n}\n"
     head = (f"{repo}#{n}: updated {record.get('updated')}; processed {len(record['processed']['events'])} statements, "
             f"head {(record['processed']['head_sha'] or '')[:10]}, patch-id {record['processed']['patch_id']}\n")
-    return head + ledger.compact_view(record) + "\n" + ("notes: " + record["notes"] + "\n" if record.get("notes") else "")
+    state, why = ledger.derive_agreement(record)
+    return (head + ledger.compact_view(record) + "\n" + ("notes: " + record["notes"] + "\n" if record.get("notes") else "")
+            + f"derived agreement: {state} ({why})\n")

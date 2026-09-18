@@ -445,3 +445,16 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
     if resp.get("notes"):
         record["notes"] = resp["notes"][:500]
     return {"changes": changes, "rejected": rejected, "checks": checks}
+
+
+# ----- derived state (computed, never stored as truth) -----
+
+def derive_agreement(record: dict) -> tuple[str, str]:
+    """Agreement state from the record's claims and support, by the same
+    rules as dossier.derive_agreement (definitions/agreement.md): the
+    hardest open claim sets the state; support decides the positive end."""
+    from .dossier import derive_agreement as _derive
+    objections = [{"reviewer": c["author"], "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
+                   "author_replied": bool(c.get("author_replies")), "status": c.get("status")} for c in record["claims"]]
+    support = [{"reviewer": s["author"], "substantive": bool(s.get("substantive"))} for s in record["support"]]
+    return _derive({"objections": objections, "support": support})
