@@ -38,7 +38,7 @@ def derive_reviewability(rec: dict, record: dict, cfg: Config) -> dict:
     sig = rec.get("signals") or {}
     silent = sig.get("author_silent_days") or 0
     waiting = sig.get("waiting_on_author_days") or 0
-    unanswered = [c for c in record["claims"] if c.get("status") == "open" and not c.get("author_replies")]
+    unanswered = [c for c in record["claims"] if c.get("status") == "open" and not c.get("author_replies") and not c.get("other_replies")]
     if unanswered and waiting >= cfg.waiting_on_author_days:
         who = ", ".join(sorted({c["author"] for c in unanswered})[:3])
         return {"state": "Paused", "label": "Waiting on author",
@@ -67,7 +67,7 @@ def _agreement(record: dict) -> dict:
     for s in record["support"]:
         lines.append(f"{s['author']}: {s.get('verdict') or 'support'}{' — ' + s['reason'] if s.get('reason') else ''}")
     objections = [{"reviewer": c["author"], "association": c.get("association"), "kind": c.get("kind"), "after_reply": c.get("after_reply"), "after_reply_note": c.get("after_reply_note") or "", "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
-                   "author_replied": bool(c.get("author_replies")), "fix_pushed": bool(c.get("fix")), "status": c.get("status"),
+                   "author_replied": bool(c.get("author_replies")), "others_replied": bool(c.get("other_replies")), "fix_pushed": bool(c.get("fix")), "status": c.get("status"),
                    "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": c["id"],
                    "resolution_evidence": (f"{c['settled_by'].get('at')}: {c['settled_by'].get('by')}: '{c['settled_by'].get('quote', '')}'" if c.get("settled_by") else ""),
                    "pin": c.get("pin")} for c in record["claims"]]

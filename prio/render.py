@@ -256,7 +256,7 @@ def _objections(ag: dict) -> str:
             status = o.get("status") or ""
             if o.get("status_model") and o["status_model"] != status:
                 status = f'{status} <span class="muted">(model said {_e(o["status_model"])})</span>'
-            replied = "yes" if o.get("author_replied") else "no"
+            replied = "yes" if o.get("author_replied") else ("by others" if o.get("others_replied") else "no")
             if o.get("author_replied_model") and not o.get("author_replied"):
                 replied = 'no <span class="muted">(model said yes)</span>'
             if o.get("fix_pushed"):

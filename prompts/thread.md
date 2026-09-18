@@ -18,26 +18,27 @@ interface, maintenance, usefulness, style). Record the concrete harm it
 names, a short quote, its kind, whether the reviewer treats it as a
 reason not to merge (a NACK word is not required; "this seems backwards
 to me", "I don't think this should go in", "potential footgun" from a
-maintainer are rejections), the ids of the author's replies to it, and
-its status:
+maintainer are rejections), the ids of the author's replies to it, the
+ids of replies by anyone else (another reviewer explaining why the
+concern does not apply, or what to do about it; objections can be
+answered by anyone, not only the author), and its status:
 
 - open: not settled;
 - resolved: a fix was pushed and the reviewer did not object again, or
-  the author rejected it with a rationale and the reviewer did not push
-  back, or the reviewer withdrew it;
+  the author or another reviewer rejected it with a rationale and the
+  objector did not push back, or the objector withdrew it;
 - agreed_to_disagree: both accept the PR can proceed with the harm
   standing.
 
 For anything not open, give the id and a short quote of the statement
-that settled it. For an open claim the author has answered, also say
+that settled it. For an open claim that the author or anyone else has answered, also say
 where it stands now in `after_reply`: `likely_settled` when the reply
-or a later push addressed the point and the reviewer has not pushed
+or a later push addressed the point and the objector has not pushed
 back, even though nothing on the record settles it; `unclear` when the
-reply is partial, or the reviewer has not reacted and the point could
-go either way; `still_standing` when the reviewer pushed back after the
+reply is partial, or the objector has not reacted and the point could
+go either way; `still_standing` when the objector pushed back after the
 reply, or the reply does not address the harm. Give a few words of
-reason in `after_reply_note`. Use `no_reply` when the author has not
-answered. This judgment is shown next to the claim; the status stays
+reason in `after_reply_note`. Use `no_reply` when nobody has answered. This judgment is shown next to the claim; the status stays
 open until something on the record settles it. A push is not a reply and does not by itself settle a
 claim; an agreement in principle without a pushed fix leaves it open;
 approval by another reviewer does not answer it; check dates.
