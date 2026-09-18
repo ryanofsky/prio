@@ -78,6 +78,11 @@ def spend(data_dir: Path) -> dict:
             month = (d.get("created") or "")[:7]
             by_month[month] = by_month.get(month, 0.0) + (d.get("cost_usd") or 0.0)
             n += 1
+    for p in glob.glob(str(data_dir / "data" / "runs" / "*.json")):  # ledger pipeline runs
+        m = _read_json(Path(p)) or {}
+        month = (m.get("started") or "")[:7]
+        by_month[month] = by_month.get(month, 0.0) + (m.get("cost_usd") or 0.0)
+        n += len(m.get("calls") or [])
     return {"by_month": dict(sorted(by_month.items(), reverse=True)), "outputs": n}
 
 
@@ -97,6 +102,18 @@ def needs_summary(data_dir: Path) -> dict:
         if r.get("confidence") == "low":
             low.append(int(Path(p).parent.name))
     return {"total": total, "needs": dict(sorted(needs.items(), key=lambda kv: -kv[1])), "low_confidence": sorted(low)}
+
+
+def ledger_runs(data_dir: Path, limit: int = 15) -> list[dict]:
+    """The ledger pipeline's run manifests (data/runs/*.json), newest first."""
+    out = []
+    for p in sorted(glob.glob(str(data_dir / "data" / "runs" / "*.json")), reverse=True)[:limit]:
+        m = _read_json(Path(p)) or {}
+        calls = m.get("calls") or []
+        out.append({"id": m.get("id") or Path(p).stem, "started": (m.get("started") or "")[:16], "calls": len(calls),
+                    "stages": ", ".join(f"{k} {v}" for k, v in sorted(__import__('collections').Counter(c.get("stage") for c in calls).items())),
+                    "cost_usd": m.get("cost_usd"), "errors": len(m.get("errors") or []), "deltas": len(m.get("deltas") or {})})
+    return out
 
 
 def counts(data_dir: Path) -> dict:
@@ -130,6 +147,7 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     sp = spend(data_dir)
     ct = counts(data_dir)
     ns = needs_summary(data_dir)
+    lr = ledger_runs(data_dir)
     logs = sorted(glob.glob(str(data_dir / "logs" / "*.log")), reverse=True)[:log_count]
     (site_dir / "status" / "logs").mkdir(parents=True, exist_ok=True)
     log_links = []
@@ -140,7 +158,7 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     now = _now()
     running = bool(steps) and not any(m.startswith("done") or m.startswith("FAILED") for _, m in steps)
     payload = {"generated": now.isoformat(timespec="seconds"), "running": running, "current_run": steps,
-               "batches": batches, "spend": sp, "counts": ct, "needs": ns, "next_runs": next_runs, "logs": log_links}
+               "batches": batches, "spend": sp, "counts": ct, "needs": ns, "next_runs": next_runs, "logs": log_links, "ledger_runs": lr}
     with open(site_dir / "status.json", "w") as f:
         json.dump(payload, f, indent=1)
 
@@ -169,6 +187,11 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
                            f'<td>{("$%.2f" % r["cost_usd"]) if r.get("cost_usd") is not None else ""}</td></tr>' for r in batches[:20]) + '</table>')
     else:
         b.append('<p>None.</p>')
+    if lr:
+        b.append('<h2>Ledger pipeline runs</h2><p class="muted">Incremental PR records: each run reads only what changed. Requests and responses are kept under <code>data/raw/</code>.</p>'
+                 '<table><tr><th>Run</th><th>Started</th><th>PRs with a delta</th><th>Calls</th><th>Cost</th><th>Errors</th></tr>'
+                 + "".join(f'<tr><td>{_e(r["id"])}</td><td>{_e(r["started"])}</td><td>{r["deltas"]}</td><td>{r["calls"]}{(" (" + _e(r["stages"]) + ")") if r["stages"] else ""}</td>'
+                           f'<td>{("$%.2f" % r["cost_usd"]) if r.get("cost_usd") is not None else ""}</td><td class="{"bad" if r["errors"] else ""}">{r["errors"]}</td></tr>' for r in lr) + '</table>')
     b.append('<h2>Spend (estimated from token usage, list prices)</h2><table><tr><th>Month</th><th>USD</th></tr>'
              + "".join(f'<tr><td>{_e(m)}</td><td>${v:.2f}</td></tr>' for m, v in sp["by_month"].items()) + f'</table><p class="muted">{sp["outputs"]} stored model outputs.</p>')
     b.append(f'<h2>Data</h2><table><tr><td>Open PRs extracted</td><td>{_e(ct["open_prs"])} at {_e((ct["extracted_at"] or "")[:16])}</td></tr>'
