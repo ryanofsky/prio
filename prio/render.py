@@ -94,8 +94,9 @@ td.reviews .nack { color: #b00020; font-weight: 700; } td.reviews .stale { font-
 /* PR page: the category cards under the row, one small table each so the priority cell
    keeps the look it has in a category table (header above, open cell below). */
 tr.cards > td { padding: .6rem .5rem; background: #fafafa; }
-.cardset { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; }
+.cardset { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: .6rem; }
 table.card { width: 13%; min-width: 12rem; table-layout: fixed; background: #fff; }
+table.card tr.det .dwrap { grid-template-rows: 1fr; } /* a card is not a toggled row: always open, ordinary borders */
 table.card th { position: static; font-weight: 600; } table.card th .pos { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
 .legend { font-size: .8rem; color: var(--muted); background: #f7f7f7; border: 1px solid var(--border); border-top: none; padding: .4rem .5rem; margin: 0; }
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
@@ -536,7 +537,7 @@ def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, t
         if c["name"] in ranked:
             cell.extra_html = f'<div class="more"><a href="../rank/{_e(c["name"])}.html">Ranking notes</a></div>'
         cards.append(f'<table class="card"><thead><tr><th><a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>{pos_html}</th></tr></thead><tbody>'
-                     + _rows([cell], open=True) + '</tbody></table>')
+                     + _rows([cell]) + '</tbody></table>')
     if not cards:
         cards.append('<div class="sub">In no category.</div>')
     span = len([c for c in _CTX["columns"] if c != "prio"])
