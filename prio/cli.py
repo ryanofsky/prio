@@ -133,6 +133,22 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--format", default="lines", choices=["lines", "comma", "json"])
     se.add_argument("--agreement-reads", type=int, default=1, choices=[1, 2], help="must match the submit setting for --if-stale to compare the right prompt hash")
 
+    lg = sub.add_parser("ledger", help="incremental PR records (facts): thread reads applied to <data>/<owner>/<repo>/prs/<n>.json")
+    lgsub = lg.add_subparsers(dest="lcmd", required=True)
+    lu = lgsub.add_parser("update", help="compute deltas and run thread reads for PRs with new or edited statements")
+    lu.add_argument("--extract", required=True, type=Path)
+    lu.add_argument("--data", required=True, type=Path, help="data repo checkout")
+    lu.add_argument("--only")
+    lu.add_argument("--model", default="openrouter/google/gemini-3.8-flash")
+    lu.add_argument("--effort", default="high")
+    lu.add_argument("--prior", type=Path, help="old dossier dir; its discussion state is given as a prior on seed reads")
+    lu.add_argument("--dry-run", action="store_true")
+    lu.add_argument("--force", action="store_true", help="start every record from empty (re-seed)")
+    ls = lgsub.add_parser("show", help="print one record as the model sees it")
+    ls.add_argument("--data", required=True, type=Path)
+    ls.add_argument("--repo", default=None, help="owner/name (default: the first repo in project.toml)")
+    ls.add_argument("number", type=int)
+
     st = sub.add_parser("status-page", help="write status.html/status.json into the site dir from pipeline state")
     st.add_argument("--data-dir", required=True, type=Path)
     st.add_argument("--site-dir", required=True, type=Path)
@@ -200,6 +216,15 @@ def main(argv: list[str] | None = None) -> int:
                    confidence=split(args.confidence), flagged=args.flagged, missing=args.missing,
                    failed=args.failed, categories=set(args.category) if args.category else None,
                    if_stale=args.if_stale, model=args.model, fmt=args.format, agreement_reads=args.agreement_reads)
+        return 0
+    elif args.cmd == "ledger" and args.lcmd == "update":
+        from . import ledgerrun
+
+        res = ledgerrun.cmd_update(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.dry_run, args.prior, force=args.force)
+    elif args.cmd == "ledger" and args.lcmd == "show":
+        from . import ledgerrun
+
+        sys.stdout.write(ledgerrun.cmd_show(args.data, args.repo or cfg.repos[0].full_name, args.number))
         return 0
     elif args.cmd == "status-page":
         from . import status
