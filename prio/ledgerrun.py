@@ -111,16 +111,27 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         with open(raw_dir / f"{stem}.request.json", "w") as f:
             json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model,
                        "prompt_hash": ph, "system_chars": len(sysm[0]["text"]), "user": user}, f, indent=1)
+        # Two reads for a seed (a fresh record) when asked: the same request
+        # twice, merged by union before applying, so an objection has to be
+        # missed twice to be omitted.
+        n_reads = reads if (d["is_new"] and reads > 1) else 1
+        msgs, parsed_list, err = [], [], None
         try:
-            msg = _call(model, sysm, user, effort, max_tokens, client)
-            text = next((b.text for b in msg.content if b.type == "text"), "")
-            parsed = json.loads(text)
-            err = None
+            for _ in range(n_reads):
+                m_ = _call(model, sysm, user, effort, max_tokens, client)
+                msgs.append(m_)
+                parsed_list.append(json.loads(next((b.text for b in m_.content if b.type == "text"), "")))
         except Exception as e:
-            msg, text, parsed, err = None, "", None, str(e)[:300]
-        cost = (getattr(msg.usage, "cost", None) if msg else None)
-        if msg and cost is None:
-            cost = cost_usd(model, msg.usage, False)
+            err = str(e)[:300]
+        msg = msgs[0] if msgs else None
+        text = "\n\n=== second read ===\n\n".join(next((b.text for b in m_.content if b.type == "text"), "") for m_ in msgs)
+        parsed = None
+        if parsed_list and not err:
+            parsed = parsed_list[0] if len(parsed_list) == 1 else ledger.merge_responses(parsed_list[0], parsed_list[1])
+        cost = 0.0
+        for m_ in msgs:
+            c_ = getattr(m_.usage, "cost", None)
+            cost += c_ if c_ is not None else cost_usd(model, m_.usage, False)
         report = None
         if parsed:
             ledger.mark_processed(record, rec, d["new"] + d["edited"])
@@ -129,7 +140,7 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
             ledger.log_entry(record, run, d["new"] + d["edited"], report["changes"], cost or 0)
             ledger.save(path, record)
         with open(raw_dir / f"{stem}.response.json", "w") as f:
-            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model,
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model, "reads": n_reads,
                        "created": ledger._now(), "stop_reason": getattr(msg, "stop_reason", None) if msg else None,
                        "usage": usage_dict(msg.usage) if msg else None, "cost_usd": cost, "error": err,
                        "raw_text": text, "result": parsed, "applied": report}, f, indent=1)

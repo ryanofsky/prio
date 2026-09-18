@@ -214,10 +214,37 @@ def _response(msg, model: str):
     return text, json.loads(text), cost
 
 
+def copy_prior_code(prior_dir: Path, rec: dict, pid: str, cpath: Path) -> bool:
+    """Seeding shortcut: when the old pipeline's latest dossier for this PR
+    was made from exactly the current input (same input hash), its code
+    half is copied as the code file for the current patch-id instead of
+    being redone. Returns True when copied."""
+    latest = prior_dir / str(rec["number"]) / "latest"
+    if not latest.exists():
+        return False
+    try:
+        with open(prior_dir / str(rec["number"]) / f"{latest.read_text().strip()}.json") as f:
+            d = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    r = d.get("result")
+    if not r or d.get("input_hash") != rec.get("input_hash"):
+        return False
+    _save(cpath, {"summary": r.get("summary") or "", "problem": r.get("problem") or "", "evidence": [], "dependencies": r.get("dependencies") or {"depends_on": [], "enables": []},
+                  "scope_notes": "", "changed_since_previous": "", "card": r.get("card") or "", "needs": r.get("needs") or [],
+                  "confidence": r.get("confidence") or "medium", "uncertainties": r.get("uncertainties") or [],
+                  "repo": rec["repo"], "number": rec["number"], "patch_id": pid, "head_sha": rec["head_sha"], "assessed_at": d.get("created"),
+                  "run": "archive", "model": f"archive:{d.get('model')}", "archive_input_hash": d.get("input_hash"),
+                  "size": {"additions": rec["additions"], "deletions": rec["deletions"], "files": rec["changed_files"], "test_lines": rec.get("test_lines")}})
+    return True
+
+
 def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | None, model: str, effort: str, git_dir: Path | None,
-               patch_chars: int, dry_run: bool, force: bool = False, max_tokens: int = 16000, what: str = "both") -> dict:
+               patch_chars: int, dry_run: bool, force: bool = False, max_tokens: int = 16000, what: str = "both",
+               prior_dir: Path | None = None) -> dict:
     cats = load_categories(cfg.categories_dir)
     recs = load_extract(extract_dir, only)
+    copied = 0
     run = "run:" + ledger._now().replace("-", "").replace(":", "")[:13].replace("T", "-") + "-assess"
     raw_dir = data_dir / "raw" / run.split(":", 1)[1]
     csys, jsys = code_system(), judge_system()
@@ -233,6 +260,8 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         pid = rec.get("patch_id") or "nopatch"
         cpath = code_path(data_dir, rec["repo"], n, pid)
         code = _load(cpath)
+        if code is None and prior_dir and not force and copy_prior_code(prior_dir, rec, pid, cpath):
+            code = _load(cpath); copied += 1
         need_code = what in ("both", "code") and (force or code is None)
         cands = candidates(rec, cats)
         cd = claims_digest(record)
@@ -245,7 +274,7 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         need_judge = what in ("both", "judge") and (need_code or bool(stale))
         if need_code or need_judge:
             plan.append((n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd))
-    print(f"{len(recs)} PRs: {sum(1 for p in plan if p[6])} code assessments, {sum(1 for p in plan if p[7])} judgments", file=sys.stderr)
+    print(f"{len(recs)} PRs: {sum(1 for p in plan if p[6])} code assessments ({copied} copied from old dossiers), {sum(1 for p in plan if p[7])} judgments", file=sys.stderr)
     if dry_run:
         for n, rec, record, pid, cpath, code, need_code, need_judge, cands, cd in plan[:40]:
             u = code_user(rec, git_dir, patch_chars, None) if need_code else ""

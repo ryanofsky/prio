@@ -46,9 +46,10 @@ if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
 fi
 
 log "thread reads"
-prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
+prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
+prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
 log "code assessments and judgments"
-prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
+prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
 log "display lines"
 prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
 log "render to $OUT"

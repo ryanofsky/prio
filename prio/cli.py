@@ -148,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     lu.add_argument("--force", action="store_true", help="start every record from empty (re-seed)")
     lu.add_argument("--as-of", help="drift test: treat the extract as of this date (YYYY-MM-DD), dropping later statements")
     lu.add_argument("--run-kind", default="", help="suffix for the run id (e.g. replay)")
+    lu.add_argument("--reads", type=int, default=1, choices=[1, 2], help="2 = two reads merged by union for seed reads (fresh records)")
     la = lgsub.add_parser("assess", help="code assessment (per patch-id) and category judgments for PRs whose files are missing or stale")
     la.add_argument("--extract", required=True, type=Path)
     la.add_argument("--data", required=True, type=Path)
@@ -157,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     la.add_argument("--git", type=Path, help="git sidecar dir (patch for the code assessment)")
     la.add_argument("--patch-chars", type=int, default=40000)
     la.add_argument("--what", default="both", choices=["both", "code", "judge"])
+    la.add_argument("--prior", type=Path, help="old dossier dir: copy a dossier's code half when it was made from the current input hash")
     la.add_argument("--dry-run", action="store_true")
     la.add_argument("--force", action="store_true")
     ls = lgsub.add_parser("show", help="print one record as the model sees it")
@@ -237,12 +239,12 @@ def main(argv: list[str] | None = None) -> int:
         from . import ledgerrun
 
         res = ledgerrun.cmd_update(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.dry_run, args.prior,
-                                   force=args.force, as_of=args.as_of, run_kind=args.run_kind)
+                                   force=args.force, as_of=args.as_of, run_kind=args.run_kind, reads=args.reads)
     elif args.cmd == "ledger" and args.lcmd == "assess":
         from . import stages
 
         res = stages.cmd_assess(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.git, args.patch_chars,
-                                args.dry_run, force=args.force, what=args.what)
+                                args.dry_run, force=args.force, what=args.what, prior_dir=args.prior)
     elif args.cmd == "ledger" and args.lcmd == "show":
         from . import ledgerrun
 

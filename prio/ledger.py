@@ -468,3 +468,46 @@ def derive_agreement(record: dict) -> tuple[str, str]:
                    "author_replied": bool(c.get("author_replies")), "status": c.get("status")} for c in record["claims"]]
     support = [{"reviewer": s["author"], "substantive": bool(s.get("substantive"))} for s in record["support"]]
     return _derive({"objections": objections, "support": support})
+
+
+def _stance_rank(st: str) -> int:
+    return {"objection": 3, "support": 2, "question": 1}.get(st or "", 0)
+
+
+def merge_responses(a: dict, b: dict) -> dict:
+    """Union of two thread-read responses to the same request: a claim
+    either read found; open wins over settled and blocking over not when
+    both saw it; author replies only where both agree; support and
+    participants unioned, the stronger stance kept. The result goes
+    through apply_thread_response like a single response."""
+    claims: dict[str, dict] = {}
+    for read in (a, b):
+        for c in read.get("claims") or []:
+            i = c.get("id")
+            if i not in claims:
+                claims[i] = dict(c)
+                continue
+            m = claims[i]
+            if c.get("status") == "open" and m.get("status") != "open":
+                m.update(status="open", settled_by_id="", settled_by_quote="")
+            m["blocking"] = bool(m.get("blocking") or c.get("blocking"))
+            m["author_replies"] = sorted(set(m.get("author_replies") or []) & set(c.get("author_replies") or []))
+            m["fix_pushed"] = bool(m.get("fix_pushed") and c.get("fix_pushed"))
+            if not m.get("harm") and c.get("harm"):
+                m["harm"] = c["harm"]
+    support: dict[str, dict] = {}
+    for read in (a, b):
+        for x in read.get("support") or []:
+            k = x.get("id")
+            if k not in support:
+                support[k] = dict(x)
+            else:
+                support[k]["substantive"] = bool(support[k].get("substantive") or x.get("substantive"))
+    parts: dict[str, dict] = {}
+    for read in (a, b):
+        for x in read.get("participants") or []:
+            k = x.get("login")
+            if k not in parts or _stance_rank(x.get("stance")) > _stance_rank(parts[k].get("stance")):
+                parts[k] = dict(x)
+    notes = " / ".join(x for x in (a.get("notes"), b.get("notes")) if x)
+    return {"participants": list(parts.values()), "claims": list(claims.values()), "support": list(support.values()), "notes": notes}
