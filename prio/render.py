@@ -1,12 +1,15 @@
 """Stage 5: render extract + dossiers into a static site.
 
 One page per category, one row per member PR sorted by score. Each PR is
-two table rows: a summary row whose cells show a condensed value (with the
-detail as a tooltip), and a detail row under it that starts collapsed.
-Clicking anywhere in the summary row that is not a link opens the detail
-row with a short expansion; a #pr-N link in the URL opens that row on
-load. No external assets; CSS and JS are inlined so the pages work from
-a file:// URL and behind any static server.
+two table rows: a summary row whose cells show a condensed value, and a
+detail row under it that starts collapsed. Clicking anywhere in the
+summary row that is not a link opens the detail row with a short
+expansion and puts #pr-N in the URL; a #pr-N link opens that row on load.
+Every PR number is a GitHub link followed by a small page icon that leads
+to the PR's page on this site. Under 1000px the cells wrap; under 640px
+each row becomes a block with labeled chips. No external assets; CSS and
+JS are inlined so the pages work from a file:// URL and behind any static
+server.
 
 A PR page shows the same table with the PR's one row already open and the
 priority column left out, because priority belongs to a category: under
@@ -100,6 +103,35 @@ table.card th { position: static; font-weight: 600; } table.card th .pos { displ
 .legend span { display:inline-block; padding: 0 .4rem; margin-right:.3rem; border:1px solid var(--border); background: #fff; }
 tr.unranked td { color: var(--muted); }
 td.pr .tg { float: right; color: var(--link); font-weight: 600; margin-left: .5rem; user-select: none; }
+a.loc { color: #999; margin-left: .2em; vertical-align: 15%; } a.loc:hover { color: var(--link); } a.loc svg { display: inline-block; }
+@media (max-width: 1000px) {
+  main { padding: .6rem .5rem 3rem; }
+  table { font-size: .82rem; } th, td { padding: .3rem .35rem; }
+  td.prio, td.reviews .brief, td.size .brief { white-space: normal; }
+  col.c-pr { width: 38%; } table.noprio col.c-pr { width: 50%; } col.c-prio, col.c-rev, col.c-agree { width: 14%; } col.c-size { width: 12%; }
+  table.card { width: 30%; }
+}
+/* Phones: the summary row becomes a block with the PR on its own line and the other
+   cells as labeled chips; the detail row stacks its cells with the same labels. */
+@media (max-width: 640px) {
+  table, tbody { display: block; } thead, colgroup { display: none; }
+  tr.row { display: flex; flex-wrap: wrap; border-top: 1px solid var(--border); }
+  tr.row td { border: 0; } tr.row td.pr { flex: 1 1 100%; }
+  tr.row td:not(.pr) { flex: 0 1 auto; padding-top: 0; padding-bottom: .3rem; margin: 0 .35rem .1rem; border: 1px solid var(--border); padding: .1rem .4rem; }
+  tr.row td:not(.pr)::before { content: attr(data-col) ": "; color: var(--muted); font-size: .75rem; }
+  tr.det { display: block; } tr.det td { display: block; border: 0; }
+  tr.det td::before { content: attr(data-col); display: block; color: var(--muted); font-size: .75rem; padding-top: .3rem; }
+  tr.det td.pr::before { content: none; }
+  tr.det td .detail { border-top: 0; padding-top: .1rem; }
+  tr.det:not(.open) td::before { display: none; }
+  tr.row.open td, tr.det.open td { border-left: 0; border-right: 0; } tr.row.open td { border-top: 0; } tr.det.open td { border-bottom: 0; }
+  tr.row.open { border-top: 2px solid #444; } tr.det.open { border-bottom: 2px solid #444; }
+  tr.cards { display: block; } tr.cards > td { display: block; } table.card { width: 100%; min-width: 0; display: table; } table.card thead { display: table-header-group; }
+  table.card tr.row, table.card tr.det { display: table-row; } table.card td { display: table-cell; }
+  table.card tr.row td::before, table.card tr.det td::before { content: none; }
+  table.card tr.row td, table.card tr.det td { border: 1px solid var(--border); }
+  .legend, .rankline { border-top: 1px solid var(--border); }
+}
 .more { font-size: .8rem; margin-top: .4rem; padding-top: .4rem; border-top: 1px dashed #bbb; }
 .prpage .anchor { margin-top: 1.4rem; }
 nav.top { font-size: .85rem; margin-bottom: .6rem; } nav.top a { margin-right: 1rem; }
@@ -135,7 +167,10 @@ document.addEventListener('click', function (ev) {
   var row = ev.target.closest('tr.row');
   if (!row || !row.closest('table.toggle')) return;
   if (window.getSelection && String(window.getSelection())) return;
-  setOpen(row, !row.classList.contains('open'));
+  var open = !row.classList.contains('open');
+  setOpen(row, open);
+  if (open && row.id) history.replaceState(null, '', '#' + row.id);
+  else if (!open && location.hash === '#' + row.id) history.replaceState(null, '', location.pathname + location.search);
 });
 function openHash() {
   var row = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
@@ -152,15 +187,28 @@ def _e(s) -> str:
 
 _REPO_URL = {"url": "https://github.com/bitcoin/bitcoin"}
 _REF_RE = re.compile(r"(?<![\w/])(?:([\w.-]+/[\w.-]+))?#(\d{2,6})\b")
+# PRs with a page on this site, the path prefix to reach pr/ from the page being
+# rendered, and the PR whose own page is being rendered (no self link on it).
+_PR_CTX: dict = {"pages": set(), "prefix": "pr/", "self": None}
+
+
+def _local(n: int) -> str:
+    """A small secondary link to the PR's page on this site, after a GitHub link."""
+    if n not in _PR_CTX["pages"] or n == _PR_CTX["self"]:
+        return ""
+    return (f'<a class="loc" href="{_PR_CTX["prefix"]}{n}.html" title="#{n} on this site">'
+            '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 1.5h5l2 2v7h-7z" fill="none" stroke="currentColor"/>'
+            '<path d="M4.5 6h3M4.5 8h3" stroke="currentColor"/></svg></a>')
 
 
 def _t(text) -> str:
-    """Escape text and turn #1234 and owner/repo#1234 into GitHub links.
-    GitHub redirects /pull/N to /issues/N when N is an issue, so one form works for both."""
+    """Escape text and turn #1234 and owner/repo#1234 into GitHub links, each
+    followed by the site's own page for the PR when there is one. GitHub
+    redirects /pull/N to /issues/N when N is an issue, so one form works for both."""
     def sub(m):
         repo, n = m.group(1), m.group(2)
         url = f"https://github.com/{repo}/pull/{n}" if repo else f"{_REPO_URL['url']}/pull/{n}"
-        return f'<a href="{url}">{m.group(0)}</a>'
+        return f'<a href="{url}">{m.group(0)}</a>' + ("" if repo else _local(int(n)))
     return _REF_RE.sub(sub, _e(text))
 
 
@@ -224,6 +272,9 @@ def _ul(items) -> str:
     return "<ul>" + "".join(f"<li>{_t(i)}</li>" for i in items) + "</ul>" if items else ""
 
 
+COL_LABELS = {"prio": "Priority", "judged": "Judged", "rev": "Reviewability", "reviews": "Reviews", "agree": "Agreement", "size": "Size"}
+
+
 class Cell:
     """One column of a PR: the condensed value for the summary row and the
     detail block for the row under it. ``detail_html`` replaces the bullet
@@ -233,11 +284,12 @@ class Cell:
         self.col, self.brief, self.lines, self.style, self.extra_html, self.detail_html = col, brief, lines, style, extra_html, detail_html
 
     def summary_td(self) -> str:
-        return f'<td class="{self.col}" title="{_e(chr(10).join(self.lines))}" style="{self.style}"><span class="brief">{self.brief}</span></td>'
+        return f'<td class="{self.col}" data-col="{COL_LABELS.get(self.col, "")}" style="{self.style}"><span class="brief">{self.brief}</span></td>'
 
     def detail_td(self) -> str:
         inner = self.detail_html if self.detail_html is not None else _ul(self.lines)
-        return f'<td class="{self.col}" style="{self.style}"><div class="dwrap"><div class="dclip"><div class="detail">{inner}{self.extra_html}</div></div></div></td>'
+        return (f'<td class="{self.col}" data-col="{COL_LABELS.get(self.col, "")}" style="{self.style}">'
+                f'<div class="dwrap"><div class="dclip"><div class="detail">{inner}{self.extra_html}</div></div></div></td>')
 
 
 def _rows(cells: list[Cell], cls: str = "", open: bool = False, anchor: str = "") -> str:
@@ -382,8 +434,8 @@ def _pr_cells(rec: dict, d: dict, disp: dict | None, pr_href: str | None, toggle
     r = d["result"]
     n = rec["number"]
     L = display_lines(disp, r, None)
-    pr_brief = ((f'<span class="tg" title="expand/collapse row">(+)</span>' if toggle else "")
-                + f'<a href="{_e(rec["url"])}">#{n}</a> <span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
+    pr_brief = ((f'<span class="tg">(+)</span>' if toggle else "")
+                + f'<a href="{_e(rec["url"])}">#{n}</a>{_local(n)} <span class="author">{_e(rec["author"])}</span> <span class="title">{_e(rec["title"])}</span>')
     pr_extra = f'<div class="more"><a href="{_e(pr_href)}">Full analysis</a></div>' if pr_href else ""
     rv = r["reviewability"]
     rv_style = f"background:{REVIEWABILITY_COLORS.get(rv['state'], '#fff')};"
@@ -425,33 +477,38 @@ def _table_head(prio: str | None, toggle: bool = True) -> str:
     return f'<table class="{cls}"><colgroup>' + "".join(cols) + '</colgroup><thead><tr>' + "".join(heads) + '</tr></thead><tbody>'
 
 
-def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]]) -> str:
+def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], merged: dict, ranked: set) -> str:
     """The category cards row of a PR page: for each category the PR is in,
-    that category's priority cell as it appears on the category page, under
-    the category's title and the PR's position there."""
+    that category's priority cell as it appears on the category page (the
+    entry merged with the ranking pass, so band and notes match), under the
+    category's title and the PR's position there."""
     n = rec["number"]
     cards = []
     for c in d["result"]["categories"]:
         if not c["member"]:
             continue
+        c = merged.get((c["name"], n), c)
         cat = cats.get(c["name"])
         title = cat.title if cat else c["name"]
         pos, total = ranks.get(c["name"], (0, 0))
         pos_html = f'<span class="pos">#{pos} of {total}</span>' if total and not c.get("computed") else (f'<span class="pos">{total} PRs, unranked</span>' if total else "")
+        cell = _prio_cell(c, cats, disp, d["result"])
+        if c["name"] in ranked:
+            cell.extra_html = f'<div class="more"><a href="../rank/{_e(c["name"])}.html">Ranking notes</a></div>'
         cards.append(f'<table class="card"><thead><tr><th><a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>{pos_html}</th></tr></thead><tbody>'
-                     + _rows([_prio_cell(c, cats, disp, d["result"])], open=True) + '</tbody></table>')
+                     + _rows([cell], open=True) + '</tbody></table>')
     if not cards:
         cards.append('<div class="sub">In no category.</div>')
     return f'<tr class="cards"><td colspan="5"><div class="cardset">{"".join(cards)}</div></td></tr>'
 
 
-def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], legend: str) -> str:
+def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], legend: str, merged: dict, ranked: set) -> str:
     r = d["result"]
     n = rec["number"]
     L = display_lines(disp, r, None)
     b = []
     table = (_table_head(None, toggle=False) + _rows(_pr_cells(rec, d, disp, None, toggle=False), open=True, anchor=f"pr-{n}")
-             + _cards(rec, d, cats, disp, ranks) + "</tbody></table>" + legend)
+             + _cards(rec, d, cats, disp, ranks, merged, ranked) + "</tbody></table>" + legend)
     b.append(f'<p class="anchor"><a href="{_e(rec["url"])}">{_e(rec["url"])}</a> · <span class="author">{_e(rec["author"])}</span> · '
              f'+{rec["additions"]}/-{rec["deletions"]} in {rec["changed_files"]} files, {rec["commit_count"]} commits · '
              f'labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}</p>')
@@ -459,13 +516,17 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     for c in r["categories"]:
         if not c["member"] or c.get("computed"):
             continue
+        c = merged.get((c["name"], n), c)
         f = c["factors"]
         title = cats[c["name"]].title if c["name"] in cats else c["name"]
         pos, total = ranks.get(c["name"], (0, 0))
         why = display_lines(disp, r, c)["why"]
+        band = c.get("rank_band") or c["band"]
+        lead_note = (f' <span class="muted">(assessed alone as {_e(c["dossier_band"])}; {_t(c["rank_note"])})</span>' if c.get("rank_band")
+                     else (f' <span class="muted">(ranking pass: {_t(c["rank_note"])})</span>' if c.get("rank_note") else ""))
         b.append(f'<h2 id="cat-{_e(c["name"])}">Category: <a href="../{_e(c["name"])}.html#pr-{n}">{_e(title)}</a>'
                  + (f' (#{pos} of {total})' if total else "") + '</h2>'
-                 f'<div class="box"><p class="lead">{_e(c["band"])}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + '</p>'
+                 f'<div class="box"><p class="lead">{_e(band)}' + (f' · {_e(c["reason_tag"])}' if c.get("reason_tag") else "") + f'{lead_note}</p>'
                  f'{_ul(why)}<p>{_t(c["rationale"])}</p><p><span class="k">Membership:</span> {_t(c["evidence"])}</p>'
                  f'<p><span class="k">Factors:</span> security/stability {f["security_stability"]}, bug {f["bug_severity"]}, performance {f["performance"]}, '
                  f'user value {f["user_value"]}, leverage {f["leverage"]}</p></div>')
@@ -484,10 +545,10 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     dep = r["dependencies"]
     if dep["depends_on"] or dep["enables"] or rec["stack"]["based_on"] or rec["stack"]["base_for"]:
         b.append('<h2 id="deps">Dependencies</h2><div class="box">'
-                 + (f'<p><span class="k">Depends on:</span> {_e(", ".join("#" + str(x) for x in dep["depends_on"]))}</p>' if dep["depends_on"] else "")
+                 + (f'<p><span class="k">Depends on:</span> {_t(", ".join("#" + str(x) for x in dep["depends_on"]))}</p>' if dep["depends_on"] else "")
                  + (f'<p><span class="k">Enables:</span>{_ul(dep["enables"])}</p>' if dep["enables"] else "")
-                 + (f'<p><span class="k">Based on (shares commits with):</span> {_e(", ".join("#" + str(x) for x in rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
-                 + (f'<p><span class="k">Base for:</span> {_e(", ".join("#" + str(x) for x in rec["stack"]["base_for"]))}</p>' if rec["stack"]["base_for"] else "") + '</div>')
+                 + (f'<p><span class="k">Based on (shares commits with):</span> {_t(", ".join("#" + str(x) for x in rec["stack"]["based_on"]))}</p>' if rec["stack"]["based_on"] else "")
+                 + (f'<p><span class="k">Base for:</span> {_t(", ".join("#" + str(x) for x in rec["stack"]["base_for"]))}</p>' if rec["stack"]["base_for"] else "") + '</div>')
     files = rec.get("files") or []
     b.append(f'<h2 id="files">Files</h2><div class="box">'
              + (f'<p>{rec["test_lines"]} lines under test/bench/ci.</p>' if rec.get("test_lines") is not None else "")
@@ -629,11 +690,14 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         rank_info[name] = rk
         members[name] = merge_rank(rows, rk, dossiers)
     ranks: dict[int, dict[str, tuple[int, int]]] = {}
+    merged: dict[tuple[str, int], dict] = {}  # (category, PR) -> the row's entry after the ranking merge
     for name, rows in members.items():
         for i, (_, n, c) in enumerate(rows, 1):
             ranks.setdefault(n, {})[name] = (i, len(rows))
+            merged[(name, n)] = c
             if c.get("computed"):  # so the PR page's cards see the computed membership too
                 dossiers[n]["result"]["categories"].append(c)
+    _PR_CTX.update(pages={n for n, d in dossiers.items() if d.get("result") and n in recs}, prefix="pr/", self=None)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project = cfg.raw.get("project", {}) or {}
     repo_url = project.get("repo_url")
@@ -663,12 +727,12 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
             callout = ('<div class="banner">This list is computed, not judged: it holds every assessed PR that the model placed in none of '
                        f'{listed}. Each row\'s Judged column says which categories were asked about the PR and what they answered. '
                        'A PR here may mean a definition has a gap, or may just be one that fits no category. '
-                       'Every state and summary in the other columns is model output, shown with its rationale. Click a row to expand it; hover a cell for the same text.'
+                       'Every state and summary in the other columns is model output, shown with its rationale. Click a row to expand it.'
                        + (f' The list is defined in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>.' if repo_url else "") + '</div>')
         else:
             callout = ('<div class="banner">Every band, state, and summary on this page is model output against a '
                        'written category definition, shown with its rationale. It is an unofficial tool and does not speak for the '
-                       'project. Click a row to expand it; hover a cell for the same text.'
+                       'project. Click a row to expand it.'
                        + (f' The category definition lives in <a href="{_e(cat_src(name))}">{_e(repo_url.replace("https://github.com/", ""))}/categories/{_e(name)}.md</a>; '
                           'pull requests that improve it are welcome.' if repo_url else "") + '</div>')
         rk = rank_info.get(name)
@@ -676,6 +740,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         rank_line = ""
         if rk:
             changes = [(n, c) for _, n, c in rows if c.get("rank_band") or c.get("rank_note")]
+            _PR_CTX["prefix"] = "../pr/"
             notes_html = ('<div class="prpage">'
                           + (f'<h2>Category notes</h2><div class="box"><p>{_t(rk["notes"])}</p></div>' if rk["notes"] else "")
                           + (f'<h2>Review order and overlapping PRs</h2><div class="box">{_ul(rk["inconsistencies"])}</div>' if rk["inconsistencies"] else "")
@@ -686,8 +751,10 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
                             'checked the bands given to each PR alone against each other, ordered the PRs, and noted chains and overlaps. '
                             f'<a href="../{_e(name)}.html">Back to the category</a>.</p></div></div>')
             (out_dir / "rank").mkdir(exist_ok=True)
+            _PR_CTX["prefix"] = "../pr/"
             (out_dir / "rank" / f"{name}.html").write_text(_page(f"{title}: ranking notes", notes_html,
                                                                nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
+            _PR_CTX["prefix"] = "pr/"
             n_notes = len(rk["inconsistencies"]) + len(changes)
             rank_line = (f'<div class="rankline">Ranking pass ({_e((rk["created"] or "")[:10])}): all PRs here were compared with each other; '
                          f'<a href="rank/{_e(name)}.html">{n_notes} notes on review order, overlaps, and band changes</a>.</div>')
@@ -697,11 +764,14 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         h1 = f'<a href="{_e(cat_src(name))}">{_e(title)}</a>'
         (out_dir / f"{name}.html").write_text(_page(f"{title}: {cfg.site_title}", body, nav=nav, h1=h1))
         pages.append(name)
+    _PR_CTX["prefix"] = ""
     for n, d in dossiers.items():
         if not d.get("result") or n not in recs:
             continue
-        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {}), legend),
+        _PR_CTX["self"] = n
+        (out_dir / "pr" / f"{n}.html").write_text(_page(f"#{n} {recs[n]['title']}", _pr_page(recs[n], d, cats, displays.get(n), ranks.get(n, {}), legend, merged, set(rank_info)),
                                                           nav='<nav class="top"><a href="../index.html">Home</a></nav>'))
+    _PR_CTX.update(prefix="pr/", self=None)
     repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     default_intro = (
         "This site helps reviewers find pull requests to review in a category they care about. "
