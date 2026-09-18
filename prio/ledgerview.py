@@ -66,7 +66,7 @@ def _agreement(record: dict) -> dict:
         lines.append(f"{c['author']} ({c['kind']}, {'blocking' if c.get('blocking') else 'nonblocking'}{', no author reply' if not c.get('author_replies') else ''}): {c.get('harm') or ''}")
     for s in record["support"]:
         lines.append(f"{s['author']}: {s.get('verdict') or 'support'}{' — ' + s['reason'] if s.get('reason') else ''}")
-    objections = [{"reviewer": c["author"], "association": c.get("association"), "kind": c.get("kind"), "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
+    objections = [{"reviewer": c["author"], "association": c.get("association"), "kind": c.get("kind"), "after_reply": c.get("after_reply"), "after_reply_note": c.get("after_reply_note") or "", "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
                    "author_replied": bool(c.get("author_replies")), "fix_pushed": bool(c.get("fix")), "status": c.get("status"),
                    "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": c["id"],
                    "resolution_evidence": (f"{c['settled_by'].get('at')}: {c['settled_by'].get('by')}: '{c['settled_by'].get('quote', '')}'" if c.get("settled_by") else ""),
@@ -117,6 +117,7 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
             "evidence": code.get("evidence") or [], "scope_notes": code.get("scope_notes") or "", "changed_since_previous": code.get("changed_since_previous") or "",
             "thread": {"last_event_at": record["processed"].get("last_event_at"), "events": len(record["processed"].get("events") or []), "head_sha": record["processed"].get("head_sha")},
             "waiting_on": record.get("waiting_on") or [],
+            "risk": code.get("risk"),
             "discussion": _discussion(record),
             "reviewability": derive_reviewability(rec, record, cfg),
             "agreement": _agreement(record),

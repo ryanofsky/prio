@@ -36,9 +36,12 @@ NEEDS = ["diff", "rest_of_diff", "linked_issue_body", "base_pr_discussion", "con
          "tracking_issue", "earlier_discussion", "review_thread_resolution", "benchmark_numbers"]
 BANDS = ["P1", "P2", "P3", "P4", "Unranked"]
 
+RISK_LEVELS = ["low", "medium", "high"]
+RISK_AREAS = ["consensus", "validation", "p2p", "mempool_policy", "wallet", "wallet_storage", "rpc_api", "gui", "build", "tests", "docs", "tooling", "other"]
+
 CODE_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["summary", "problem", "evidence", "dependencies", "scope_notes", "changed_since_previous", "card", "needs", "confidence", "uncertainties"],
+    "required": ["summary", "problem", "evidence", "dependencies", "scope_notes", "changed_since_previous", "card", "needs", "confidence", "uncertainties", "risk"],
     "properties": {
         "summary": {"type": "string"},
         "problem": {"type": "string"},
@@ -51,6 +54,11 @@ CODE_SCHEMA = {
         "needs": {"type": "array", "items": {"type": "string", "enum": NEEDS}},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "uncertainties": {"type": "array", "items": {"type": "string"}},
+        "risk": {"type": "object", "additionalProperties": False, "required": ["level", "touches", "why"],
+                 "description": "how much damage a mistake in this change could do if merged, judged from what it touches and how",
+                 "properties": {"level": {"type": "string", "enum": RISK_LEVELS},
+                                "touches": {"type": "array", "items": {"type": "string", "enum": RISK_AREAS}, "description": "the sensitive areas the diff changes; empty when none"},
+                                "why": {"type": "string", "description": "one sentence: what could go wrong and who would feel it"}}},
     },
 }
 

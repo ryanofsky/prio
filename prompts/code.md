@@ -50,6 +50,17 @@ Write:
 - `confidence` and `uncertainties`: low when the description and the
   diff disagree, when the purpose is unclear, or when most of the diff
   was cut.
+- `risk`: how much damage a mistake in this change could do if merged,
+  judged from what the diff touches and how, not from how large it is.
+  `high`: consensus or validation rules, P2P message handling, wallet
+  key or database handling, anything where a bug loses funds, forks
+  nodes, or opens a remote attack. `medium`: RPC or REST interfaces,
+  mempool policy, GUI behaviour, build system changes that affect
+  release binaries, refactors of sensitive code that claim no behaviour
+  change. `low`: tests, docs, tooling, logging, cosmetic or clearly
+  local changes. List the sensitive areas in `touches` from the fixed
+  vocabulary, and say in one sentence what could go wrong and who would
+  feel it.
 
 Be concrete and brief. No hedging phrases. First sentences stand alone:
 the site shows them before the rest.

@@ -27,6 +27,7 @@ CLAIM_KINDS = ["safety", "correctness", "approach", "scope", "interface", "maint
 CLAIM_STATUS = ["open", "resolved", "agreed_to_disagree"]
 STANCES = ["objection", "support", "question", "neutral"]
 REVIEW_EVIDENCE = ["none", "read", "tested", "both"]
+AFTER_REPLY = ["no_reply", "likely_settled", "unclear", "still_standing"]
 WAITING_ON = ["author", "reviewer", "decision", "nothing"]
 HISTORY_LIMIT = 50
 LOG_LIMIT = 50
@@ -212,7 +213,7 @@ THREAD_SCHEMA = {
                            "note": {"type": "string", "description": "a few words on what they said"}}}},
         "claims": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["id", "kind", "harm", "quote", "blocking", "status", "author_replies", "fix_pushed", "settled_by_id", "settled_by_quote"],
+            "required": ["id", "kind", "harm", "quote", "blocking", "status", "author_replies", "fix_pushed", "settled_by_id", "settled_by_quote", "after_reply", "after_reply_note"],
             "properties": {
                 "id": {"type": "string", "description": "id of the statement that raised it, exactly as shown (c:, r:, rc:)"},
                 "kind": {"type": "string", "enum": CLAIM_KINDS},
@@ -224,6 +225,9 @@ THREAD_SCHEMA = {
                 "fix_pushed": {"type": "boolean", "description": "a later push actually implements the change"},
                 "settled_by_id": {"type": "string", "description": "id of the statement that settled it; empty when open"},
                 "settled_by_quote": {"type": "string", "description": "short quote from that statement; empty when open"},
+                "after_reply": {"type": "string", "enum": AFTER_REPLY,
+                                "description": "for an open claim the author has answered: where it stands now. likely_settled = the reply or a push addressed the point and the reviewer has not pushed back (but nothing settles it on the record); unclear = the reply is partial or the reviewer has not reacted; still_standing = the reviewer pushed back after the reply or the reply does not address the harm. no_reply when the author has not answered."},
+                "after_reply_note": {"type": "string", "description": "a few words on why; empty for no_reply"},
             }}},
         "support": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "verdict", "reason", "substantive", "evidence", "areas"],
@@ -298,7 +302,7 @@ def compact_view(record: dict) -> str:
     for c in record["claims"]:
         pin = f" PINNED {c['pin']['status']} by {c['pin']['by']} on {c['pin']['at'][:10]}" if c.get("pin") else ""
         settled = f"; settled by {c['settled_by']['id']}: \"{c['settled_by'].get('quote', '')[:120]}\"" if c.get("settled_by") else ""
-        replies = f"; author replied in {', '.join(c.get('author_replies') or [])}" if c.get("author_replies") else "; no author reply"
+        replies = (f"; author replied in {', '.join(c.get('author_replies') or [])}" + (f" ({c['after_reply']}: {c.get('after_reply_note') or ''})" if c.get("after_reply") and c["after_reply"] != "no_reply" else "")) if c.get("author_replies") else "; no author reply"
         lines.append(f"  {c['id']} | {c['author']} ({(c.get('association') or 'none').lower()}) | {c.get('at')} | {c['kind']} | {c['status']}"
                      f"{' | blocking' if c.get('blocking') else ' | nonblocking'}{replies}{settled}{pin}\n"
                      f"    harm: {c.get('harm') or ''}\n    quote: \"{(c.get('quote') or '')[:200]}\"")
@@ -373,6 +377,8 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
             "at": _date_of(by_id, i), "kind": c.get("kind"), "harm": c.get("harm") or "", "quote": (c.get("quote") or "")[:400],
             "blocking": bool(c.get("blocking")), "status": c.get("status") or "open",
             "author_replies": [], "fix": None, "settled_by": None, "pin": None, "history": [],
+            "after_reply": c.get("after_reply") if c.get("after_reply") in AFTER_REPLY else "no_reply",
+            "after_reply_note": (c.get("after_reply_note") or "")[:200],
         }
         for r in c.get("author_replies") or []:
             re_ = by_id.get(r)
@@ -382,6 +388,11 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
                 checks.append(f"claim {i}: reply {r} is not an author statement after the claim; dropped")
         if c.get("fix_pushed"):
             claim["fix"] = {"sha": rec.get("head_sha"), "at": None}
+        if not claim["author_replies"] and claim["after_reply"] != "no_reply":
+            checks.append(f"claim {i}: after_reply {claim['after_reply']} without an author reply; set to no_reply")
+            claim["after_reply"], claim["after_reply_note"] = "no_reply", ""
+        elif claim["author_replies"] and claim["after_reply"] == "no_reply":
+            claim["after_reply"] = "unclear"
         if claim["status"] != "open":
             sid = c.get("settled_by_id") or ""
             se = by_id.get(sid)
@@ -520,6 +531,9 @@ def merge_responses(a: dict, b: dict) -> dict:
             m["fix_pushed"] = bool(m.get("fix_pushed") and c.get("fix_pushed"))
             if not m.get("harm") and c.get("harm"):
                 m["harm"] = c["harm"]
+            harsh = {"no_reply": 0, "likely_settled": 1, "unclear": 2, "still_standing": 3}
+            if harsh.get(c.get("after_reply"), 0) > harsh.get(m.get("after_reply"), 0):
+                m["after_reply"], m["after_reply_note"] = c.get("after_reply"), c.get("after_reply_note") or ""
     support: dict[str, dict] = {}
     for read in (a, b):
         for x in read.get("support") or []:

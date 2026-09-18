@@ -29,7 +29,16 @@ its status:
   standing.
 
 For anything not open, give the id and a short quote of the statement
-that settled it. A push is not a reply and does not by itself settle a
+that settled it. For an open claim the author has answered, also say
+where it stands now in `after_reply`: `likely_settled` when the reply
+or a later push addressed the point and the reviewer has not pushed
+back, even though nothing on the record settles it; `unclear` when the
+reply is partial, or the reviewer has not reacted and the point could
+go either way; `still_standing` when the reviewer pushed back after the
+reply, or the reply does not address the harm. Give a few words of
+reason in `after_reply_note`. Use `no_reply` when the author has not
+answered. This judgment is shown next to the claim; the status stays
+open until something on the record settles it. A push is not a reply and does not by itself settle a
 claim; an agreement in principle without a pushed fix leaves it open;
 approval by another reviewer does not answer it; check dates.
 

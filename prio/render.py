@@ -261,6 +261,8 @@ def _objections(ag: dict) -> str:
                 replied = 'no <span class="muted">(model said yes)</span>'
             if o.get("fix_pushed"):
                 status += ' <span class="muted">· fix pushed</span>'
+            if o.get("after_reply") and o["after_reply"] != "no_reply":
+                status += f' <span class="muted">· after reply: {_e(o["after_reply"].replace("_", " "))}' + (f' ({_e(o["after_reply_note"])})' if o.get("after_reply_note") else "") + '</span>'
             if o.get("pin"):
                 status += f' <span class="muted">· pinned by {_e(o["pin"].get("by"))}</span>'
             who = _e(o.get("reviewer")) + (f' <span class="muted">({_e(o["association"].lower())})</span>' if o.get("association") else "")
@@ -596,6 +598,10 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
         goal += '<p><span class="k">Evidence of importance:</span></p>' + _ul(r["evidence"])
     if r.get("scope_notes"):
         goal += f'<p><span class="k">Scope:</span> {_t(r["scope_notes"])}</p>'
+    if r.get("risk"):
+        rk = r["risk"]
+        goal += (f'<p><span class="k">Risk of a mistake:</span> {_e(rk.get("level") or "")}'
+                 + (f' ({_e(", ".join(rk.get("touches") or []))})' if rk.get("touches") else "") + (f'. {_t(rk["why"])}' if rk.get("why") else "") + '</p>')
     if r.get("changed_since_previous"):
         goal += f'<p><span class="k">Changed since the previous assessment:</span> {_t(r["changed_since_previous"])}</p>'
     if r.get("needs"):
