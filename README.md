@@ -50,6 +50,42 @@ dependencies beyond the standard library; the model stages need the
 defines a `prio` command (see `shell.nix`). Set `PRIO_CONFIG` to a config
 repo checkout to omit `--config`.
 
+## Previews and second views
+
+`scripts/site-build.sh` builds a site from an engine checkout, a config,
+and a data dir into a directory; the live site, a preview, and a private
+second view are the same build with different arguments.
+
+```
+scripts/site-build.sh --name rows                     # render the live data into site/preview/rows/ (seconds, no model)
+scripts/site-build.sh --name p2 --config-ref topic    # config repo at a branch (git worktree under preview/p2/config)
+scripts/site-build.sh --name p2 --engine-ref topic --stages judge,display --only 123,456
+scripts/site-build.sh --config /var/lib/prio/src/local --out /var/lib/prio/site/local
+scripts/site-build.sh --remove p2
+```
+
+Previews live under `<site>/preview/<name>/` with an index at
+`preview/index.html`; the daily run's rsync leaves `preview/` and
+`local/` alone. With `--stages`, the stages run on a git worktree of the
+data repo (branch `preview/<name>`), so the live data is untouched; a
+category edit re-judges that category, a `definitions/priority.md` edit
+re-judges everything named in `--only`.
+
+A config may inherit another with `[project] inherit = "<path>"` (or a
+list of candidate paths, first existing wins): it then sees the base's
+categories, prompts, definitions, and settings, and adds or overrides
+its own. Prompts and definitions resolve config-first
+(`<config>/prompts/`, `<config>/definitions/`, then the engine), and
+hashes cover the text actually used. `[data] prefix = "x"` keeps a
+config's judgment files under `<owner>/<repo>/x/categories/` so two
+configs can share one data repo's facts. `[site] columns` names the
+table columns, and `[engine] modules = ["name"]` loads
+`<config>/engine/name.py`, which may add columns (a `COLUMNS` dict with
+`label`, `cell(rec, d, ctx)`, optional `legend` and `sort_key`). A
+computed category with `rule: all` and `sort: <column>` lists every
+assessed PR in that column's order. The NixOS module's
+`services.prio.local` renders such a config daily after the main run.
+
 ## Usage
 
 ### Extract

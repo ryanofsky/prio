@@ -27,6 +27,7 @@ from pathlib import Path
 
 from . import ledger
 from .categories import Category, load_categories
+from . import texts
 from .config import Config
 from .dossier import ENGINE_ROOT, _client, load_extract, load_patch, request_params
 from .prices import cost_usd, usage_dict
@@ -85,7 +86,7 @@ def category_hash(c: Category) -> str:
 
 
 def priority_hash() -> str:
-    return _h((ENGINE_ROOT / "definitions" / "priority.md").read_text() + (ENGINE_ROOT / "definitions" / "bands.md").read_text())
+    return _h(texts.read("definitions/priority.md") + texts.read("definitions/bands.md"))
 
 
 def claims_digest(record: dict) -> str:
@@ -101,9 +102,12 @@ def code_path(data: Path, repo: str, n: int, patch_id: str) -> Path:
     return data / owner / name / "code" / str(n) / f"{patch_id}.json"
 
 
-def judgment_path(data: Path, repo: str, cat: str, n: int) -> Path:
+def judgment_path(data: Path, repo: str, cat: str, n: int, prefix: str = "") -> Path:
+    """``<data>/<owner>/<repo>/<prefix>categories/<cat>/<n>.json``; the prefix
+    (``[data] prefix`` in a config) keeps one config's judgments apart from
+    another's in a shared data repo. Facts (records, code files) never take it."""
     owner, name = repo.split("/", 1)
-    return data / owner / name / "categories" / cat / f"{n}.json"
+    return data / owner / name / f"{prefix}categories" / cat / f"{n}.json"
 
 
 def _load(p: Path) -> dict | None:
@@ -123,8 +127,8 @@ def _save(p: Path, payload: dict) -> None:
 # ----- code assessment -----
 
 def code_system() -> list[dict]:
-    text = ((ENGINE_ROOT / "prompts" / "code.md").read_text().strip() + "\n\n---\n\n# Definition: priority.md\n\n"
-            + (ENGINE_ROOT / "definitions" / "priority.md").read_text().strip()
+    text = (texts.read("prompts/code.md").strip() + "\n\n---\n\n# Definition: priority.md\n\n"
+            + texts.read("definitions/priority.md").strip()
             + "\n\n---\n\n# Output\n\nReturn one JSON object matching the provided schema. `needs` values: " + ", ".join(NEEDS) + ".")
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
@@ -168,9 +172,9 @@ def code_user(rec: dict, git_dir: Path | None, patch_chars: int, prior: dict | N
 # ----- judgment -----
 
 def judge_system() -> list[dict]:
-    text = ((ENGINE_ROOT / "prompts" / "judge.md").read_text().strip()
-            + "\n\n---\n\n# Definition: priority.md\n\n" + (ENGINE_ROOT / "definitions" / "priority.md").read_text().strip()
-            + "\n\n---\n\n# Definition: bands.md\n\n" + (ENGINE_ROOT / "definitions" / "bands.md").read_text().strip()
+    text = (texts.read("prompts/judge.md").strip()
+            + "\n\n---\n\n# Definition: priority.md\n\n" + texts.read("definitions/priority.md").strip()
+            + "\n\n---\n\n# Definition: bands.md\n\n" + texts.read("definitions/bands.md").strip()
             + "\n\n---\n\n# Output\n\nReturn one JSON object matching the provided schema, with one entry per candidate category named in the user turn.")
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
@@ -245,11 +249,11 @@ def copy_prior_code(prior_dir: Path, rec: dict, pid: str, cpath: Path) -> bool:
 def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | None, model: str, effort: str, git_dir: Path | None,
                patch_chars: int, dry_run: bool, force: bool = False, max_tokens: int = 16000, what: str = "both",
                prior_dir: Path | None = None) -> dict:
-    cats = load_categories(cfg.categories_dir)
+    cats = load_categories(cfg.categories_dirs)
     recs = load_extract(extract_dir, only)
     copied = 0
     run = "run:" + ledger._now().replace("-", "").replace(":", "")[:13].replace("T", "-") + "-assess"
-    raw_dir = data_dir / "raw" / run.split(":", 1)[1]
+    raw_dir = data_dir / f"{cfg.data_prefix}raw" / run.split(":", 1)[1]
     csys, jsys = code_system(), judge_system()
     phash = priority_hash()
     client = None if model.startswith("openrouter/") else _client()
@@ -270,7 +274,7 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         cd = claims_digest(record)
         stale = []
         for c in cands:
-            j = _load(judgment_path(data_dir, rec["repo"], c.name, n))
+            j = _load(judgment_path(data_dir, rec["repo"], c.name, n, cfg.data_prefix))
             if force or j is None or j.get("category_hash") != category_hash(c) or j.get("priority_hash") != phash \
                     or (j.get("from") or {}).get("patch_id") != pid or (j.get("from") or {}).get("claims_digest") != cd:
                 stale.append(c.name)
@@ -361,7 +365,7 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
                 manifest["errors"].append(f"#{n} judge: no entry for {c.name}"); continue
             if not j.get("member"):
                 j = dict(j, band="Unranked", score=0.0)
-            _save(judgment_path(data_dir, rec["repo"], c.name, n),
+            _save(judgment_path(data_dir, rec["repo"], c.name, n, cfg.data_prefix),
                   {"repo": rec["repo"], "number": n, "category": c.name, "category_hash": category_hash(c), "priority_hash": phash,
                    "from": {"patch_id": pid, "claims_digest": cd}, "judged_at": ledger._now(), "run": run, "model": model,
                    "member": bool(j.get("member")), "evidence": j.get("evidence"), "band": j.get("band"), "score": j.get("score"),
@@ -369,8 +373,8 @@ def cmd_assess(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
             written.append(f"{c.name}={j.get('band') if j.get('member') else '-'}")
         print(f"  #{n}: judge ${cost:.4f} {' '.join(written)}", file=sys.stderr)
     manifest["ended"] = ledger._now()
-    (data_dir / "runs").mkdir(parents=True, exist_ok=True)
-    with open(data_dir / "runs" / f"{run.split(':', 1)[1]}.json", "w") as f:
+    (data_dir / f"{cfg.data_prefix}runs").mkdir(parents=True, exist_ok=True)
+    with open(data_dir / f"{cfg.data_prefix}runs" / f"{run.split(':', 1)[1]}.json", "w") as f:
         json.dump(manifest, f, indent=1)
     print(f"total ${manifest['cost_usd']:.4f}, {len(manifest['errors'])} errors", file=sys.stderr)
     return {"run": run, "calls": len(manifest["calls"]), "cost_usd": round(manifest["cost_usd"], 4), "errors": len(manifest["errors"])}

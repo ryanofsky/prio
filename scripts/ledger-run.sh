@@ -65,9 +65,10 @@ log "display lines"
 prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
 log "render to $OUT"
 prio render --extract "$D/extract" --data "$L" --display "$L/display" --rank "$RANK" --out "$L/site.new" >/dev/null
-mkdir -p "$OUT"; rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ "$L/site.new/" "$OUT/"; rm -rf "$L/site.new"
+mkdir -p "$OUT"; rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ --exclude preview/ --exclude local/ "$L/site.new/" "$OUT/"; rm -rf "$L/site.new"
 log "commit"
 git -C "$L" add -A
 git -C "$L" commit --quiet -m "run $(date -u +%F): $(git -C "$L" diff --cached --stat | tail -1)" || log "nothing to commit"
+if git -C "$L" remote get-url origin >/dev/null 2>&1; then git -C "$L" push --quiet origin HEAD 2>&1 | tail -1 || log "push to origin failed (see above); the commit is local"; fi
 mark "done: site published"
 log "done"

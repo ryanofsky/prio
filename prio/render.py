@@ -67,8 +67,6 @@ h1 { font-size: 1.4rem; margin: .5rem 0 .25rem; } .sub { color: var(--muted); fo
 .banner { background:#fff8e1; border:1px solid #f0d78c; padding:.5rem .5rem; font-size:.85rem; margin: 1rem 0 0; }
 nav.cats a { margin-right: 1rem; }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; background: #fff; table-layout: fixed; }
-col.c-pr { width: 42%; } col.c-prio { width: 13%; } col.c-rev { width: 13%; } col.c-reviews { width: 8%; } col.c-agree { width: 13%; } col.c-size { width: 11%; }
-table.noprio col.c-pr { width: 55%; }
 td { overflow-wrap: anywhere; }
 th, td { border: 1px solid var(--border); padding: .35rem .5rem; vertical-align: top; text-align: left; }
 th { background: #f0f0f0; position: sticky; top: 0; }
@@ -108,7 +106,6 @@ a.loc { color: #999; margin-left: .2em; vertical-align: 15%; } a.loc:hover { col
   main { padding: .6rem .5rem 3rem; }
   table { font-size: .82rem; } th, td { padding: .3rem .35rem; }
   td.prio, td.reviews .brief, td.size .brief { white-space: normal; }
-  col.c-pr { width: 38%; } table.noprio col.c-pr { width: 50%; } col.c-prio, col.c-rev, col.c-agree { width: 14%; } col.c-size { width: 12%; }
   table.card { width: 30%; }
 }
 /* Phones: the summary row becomes a block with the PR on its own line and the other
@@ -272,7 +269,21 @@ def _ul(items) -> str:
     return "<ul>" + "".join(f"<li>{_t(i)}</li>" for i in items) + "</ul>" if items else ""
 
 
-COL_LABELS = {"prio": "Priority", "judged": "Judged", "rev": "Reviewability", "reviews": "Reviews", "agree": "Agreement", "size": "Size"}
+# Columns by name: header label and width in percent at full and narrow
+# widths (the PR column takes what is left). The built-in cells are made by
+# _pr_cells; a config module (``[engine] modules``) adds entries with a
+# ``cell(rec, d, ctx) -> Cell`` builder, an optional ``legend`` HTML line, and
+# an optional ``sort_key(rec, d, ctx)`` that computed categories may sort by.
+COLUMNS: dict[str, dict] = {
+    "pr": {"label": "PR"},
+    "prio": {"label": "Priority", "width": 13, "narrow": 14},
+    "rev": {"label": "Reviewability", "width": 13, "narrow": 14},
+    "reviews": {"label": "Reviews", "width": 8, "narrow": 8},
+    "agree": {"label": "Agreement", "width": 13, "narrow": 14},
+    "size": {"label": "Size", "width": 11, "narrow": 12},
+}
+COL_LABELS = {k: v["label"] for k, v in COLUMNS.items()}
+COL_LABELS["judged"] = "Judged"
 
 
 class Cell:
@@ -411,7 +422,10 @@ def _prio_cell(cat: dict, cats: dict, disp: dict | None, r: dict) -> Cell:
         accepted = [j for j in judged if j["member"]]
         lines = [f'{cats[j["name"]].title if j["name"] in cats else j["name"]}: {"member. " if j["member"] else "not a member. "}{j.get("evidence") or "(no reason recorded)"}'
                  for j in judged] or ["No category was asked about this PR"]
-        brief = (f'{len(rejected)} rejected' if judged else "not judged") + (", in " + ", ".join(j["name"] for j in accepted) if accepted else "")
+        if accepted:
+            brief = ", ".join(j["name"] for j in accepted) + (f' ({len(rejected)} rejected)' if rejected else "")
+        else:
+            brief = f'{len(rejected)} rejected' if judged else "not judged"
         return Cell("judged", _e(brief), lines)
     L = display_lines(disp, r, cat)
     tag = cat.get("reason_tag") or ""
@@ -454,27 +468,53 @@ def _pr_cells(rec: dict, d: dict, disp: dict | None, pr_href: str | None, toggle
         sz_brief = f'+{rec["additions"]}/-{rec["deletions"]}'
         sz_lines = [f'{rec["changed_files"]} files', f'{rec["commit_count"]} commits']
         sz_style = f"background:{SIZE_COLORS.get(rec['size_bucket'], '#fff')};"
-    return [Cell("pr", pr_brief, L["goal"], extra_html=pr_extra),
-            Cell("rev", _t(rv["label"]), L["reviewability"], style=rv_style),
-            Cell("reviews", rw_brief, rw_lines, style=rw_style, detail_html=rw_links or None),
-            Cell("agree", _e(ag["state"]), L["agreement"], style=ag_style),
-            Cell("size", sz_brief, sz_lines, style=sz_style)]
+    built = {"pr": Cell("pr", pr_brief, L["goal"], extra_html=pr_extra),
+             "rev": Cell("rev", _t(rv["label"]), L["reviewability"], style=rv_style),
+             "reviews": Cell("reviews", rw_brief, rw_lines, style=rw_style, detail_html=rw_links or None),
+             "agree": Cell("agree", _e(ag["state"]), L["agreement"], style=ag_style),
+             "size": Cell("size", sz_brief, sz_lines, style=sz_style)}
+    ctx = dict(_CTX)
+    ctx["disp"] = disp
+    out = []
+    for name in _CTX["columns"]:
+        if name in built:
+            out.append(built[name])
+        elif name == "prio":
+            continue  # per category; _row inserts it
+        elif "cell" in COLUMNS.get(name, {}):
+            out.append(COLUMNS[name]["cell"](rec, d, ctx))
+        else:
+            raise ValueError(f"unknown column {name!r} in [site] columns")
+    return out
+
+
+# What a config module's column builder gets besides the PR: the config, the
+# categories, the rank-merged category entries, and (per call) the display lines.
+_CTX: dict = {"cfg": None, "cats": {}, "merged": {}, "columns": list(COLUMNS), "disp": None}
 
 
 def _row(rec: dict, d: dict, cat: dict, cats: dict, disp: dict | None, pr_href: str) -> str:
-    """One PR's rows on a category page: the PR cells with the category's priority cell second."""
+    """One PR's rows on a category page: the PR cells with the category's priority cell in its column."""
     cells = _pr_cells(rec, d, disp, pr_href)
-    cells.insert(1, _prio_cell(cat, cats, disp, d["result"]))
+    if "prio" in _CTX["columns"]:
+        cells.insert(_CTX["columns"].index("prio"), _prio_cell(cat, cats, disp, d["result"]))
     cls = "unranked" if cat["band"] == "Unranked" else ""
     return _rows(cells, cls, anchor=f"pr-{rec['number']}")
 
 
 def _table_head(prio: str | None, toggle: bool = True) -> str:
-    """The table opening: ``prio`` is the second column's header (None leaves the column out)."""
-    cols = ['<col class="c-pr">'] + (['<col class="c-prio">'] if prio else []) + ['<col class="c-rev">', '<col class="c-reviews">', '<col class="c-agree">', '<col class="c-size">']
-    heads = ['<th>PR</th>'] + ([f'<th>{_e(prio)}</th>'] if prio else []) + ['<th>Reviewability</th>', '<th>Reviews</th>', '<th>Agreement</th>', '<th>Size</th>']
+    """The table opening for the configured columns: ``prio`` is the priority
+    column's header (None leaves that column out). Column widths are written
+    per table so a config with extra columns still sums to 100%."""
+    names = [c for c in _CTX["columns"] if c != "prio" or prio]
+    rest = 100 - sum(COLUMNS[c].get("width", 13) for c in names if c != "pr")
+    narrow = 100 - sum(COLUMNS[c].get("narrow", 14) for c in names if c != "pr")
+    style = ("<style>" + "".join(f'col.c-{c}{{width:{COLUMNS[c].get("width", 13)}%}}' for c in names if c != "pr") + f'col.c-pr{{width:{rest}%}}'
+             + "@media (max-width:1000px){" + "".join(f'col.c-{c}{{width:{COLUMNS[c].get("narrow", 14)}%}}' for c in names if c != "pr") + f'col.c-pr{{width:{narrow}%}}' + "}</style>")
+    cols = "".join(f'<col class="c-{c}">' for c in names)
+    heads = "".join(f'<th>{_e(prio if c == "prio" else COLUMNS[c]["label"])}</th>' for c in names)
     cls = " ".join(x for x in ["toggle" if toggle else "", "" if prio else "noprio"] if x)
-    return f'<table class="{cls}"><colgroup>' + "".join(cols) + '</colgroup><thead><tr>' + "".join(heads) + '</tr></thead><tbody>'
+    return f'{style}<table class="{cls}"><colgroup>{cols}</colgroup><thead><tr>{heads}</tr></thead><tbody>'
 
 
 def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], merged: dict, ranked: set) -> str:
@@ -499,7 +539,8 @@ def _cards(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, t
                      + _rows([cell], open=True) + '</tbody></table>')
     if not cards:
         cards.append('<div class="sub">In no category.</div>')
-    return f'<tr class="cards"><td colspan="5"><div class="cardset">{"".join(cards)}</div></td></tr>'
+    span = len([c for c in _CTX["columns"] if c != "prio"])
+    return f'<tr class="cards"><td colspan="{span}"><div class="cardset">{"".join(cards)}</div></td></tr>'
 
 
 def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str, tuple[int, int]], legend: str, merged: dict, ranked: set) -> str:
@@ -623,10 +664,12 @@ def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
 
 
 def computed_members(cat, members: dict, dossiers: dict, recs: dict) -> list:
-    """Rows of a computed category: every assessed PR that is a member of none
-    of the categories it names, newest first. Each row's category dict carries
-    the PR's judgments so the page can show what was asked and answered."""
-    excluded = {n for name in cat.not_in for _, n, _c in members.get(name, [])}
+    """Rows of a computed category: with rule ``not_in``, every assessed PR
+    that is a member of none of the categories it names; with rule ``all``,
+    every assessed PR. Newest first, or by the sort key of the column named
+    in ``sort``. Each row's category dict carries the PR's judgments so the
+    page can show what was asked and answered."""
+    excluded = {n for name in cat.not_in for _, n, _c in members.get(name, [])} if cat.rule == "not_in" else set()
     rows = []
     for n, d in dossiers.items():
         r = d.get("result")
@@ -635,13 +678,24 @@ def computed_members(cat, members: dict, dossiers: dict, recs: dict) -> list:
         judged = [{"name": c["name"], "member": bool(c["member"]), "evidence": c.get("evidence") or ""} for c in r["categories"] if not c.get("computed")]
         rows.append((float(n), n, {"name": cat.name, "member": True, "computed": True, "band": "", "score": 0.0, "reason_tag": "",
                                     "rationale": "", "evidence": "", "factors": {}, "judged": judged}))
-    rows.sort(key=lambda x: -x[1])
+    if cat.sort:
+        key = COLUMNS.get(cat.sort, {}).get("sort_key")
+        if not key:
+            raise ValueError(f"{cat.name}: sort column {cat.sort!r} has no sort key")
+        rows.sort(key=lambda x: (key(recs[x[1]], dossiers[x[1]], _CTX), -x[1]))
+    else:
+        rows.sort(key=lambda x: -x[1])
     return rows
 
 
 def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Path, display_dir: Path | None = None,
            rank_dir: Path | None = None, data_dir: Path | None = None) -> dict:
-    cats = {c.name: c for c in load_categories(cfg.categories_dir, computed=True)}
+    cats = {c.name: c for c in load_categories(cfg.categories_dirs, computed=True)}
+    for mod in cfg.load_modules():
+        COLUMNS.update(getattr(mod, "COLUMNS", {}))
+        if hasattr(mod, "setup"):
+            mod.setup(cfg)
+    _CTX.update(cfg=cfg, cats=cats, columns=cfg.columns)
     _SIZE_CFG.update({"small": cfg.size_small, "medium": cfg.size_medium, "large": cfg.size_large})
     if cfg.repos:
         _REPO_URL["url"] = f"https://github.com/{cfg.repos[0].full_name}"
@@ -695,6 +749,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         for i, (_, n, c) in enumerate(rows, 1):
             ranks.setdefault(n, {})[name] = (i, len(rows))
             merged[(name, n)] = c
+            _CTX["merged"] = merged
             if c.get("computed"):  # so the PR page's cards see the computed membership too
                 dossiers[n]["result"]["categories"].append(c)
     _PR_CTX.update(pages={n for n, d in dossiers.items() if d.get("result") and n in recs}, prefix="pr/", self=None)
@@ -709,7 +764,8 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
               f'<span style="background:{REVIEWABILITY_COLORS["Paused"]}">Paused</span></div>'
               '<div>Agreement: ' + "".join(f'<span style="background:{v}">{k}</span>' for k, v in AGREEMENT_COLORS.items()) + '</div>'
               '<div>Reviews: current code-review ACKs, then (+stale ACKs) and <b style="color:#b00020">-NACKs</b>; greener = more ACKs.</div>'
-              '<div>Size: lines added or modified outside tests, then in tests; greener = smaller.</div></div>')
+              '<div>Size: lines added or modified outside tests, then in tests; greener = smaller.</div>'
+              + "".join(COLUMNS[c].get("legend", "") for c in cfg.columns if c in COLUMNS) + '</div>')
     nav = '<nav class="top"><a href="index.html">Home</a></nav>'
     repo_short = repo_url.replace("https://github.com/", "") if repo_url else ""
     pages = []
@@ -717,7 +773,7 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
         cat = cats.get(name)
         title = cat.title if cat else name
         computed = bool(cat and cat.computed)
-        head = _table_head("Judged" if computed else "Priority")
+        head = _table_head(("Categories" if cat.rule == "all" else "Judged") if computed else "Priority")
         body_rows = "".join(_row(recs[n], dossiers[n], c, cats, displays.get(n), f"pr/{n}.html") for _, n, c in rows)
         covers = (f'<div class="covers"><div class="src">Category definition: <a href="{_e(cat_src(name))}">{_e(repo_short)}/categories/{_e(name)}.md</a>'
                   + (f' · editor <a href="https://github.com/{_e(cat.owner)}">{_e(cat.owner)}</a>' if cat.owner else "") + '</div>'

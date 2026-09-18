@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .categories import load_categories
+from . import texts
 from .config import Config
 from .dossier import ENGINE_ROOT, _client, load_extract, dossier_stem
 from .prices import cost_usd, usage_dict
@@ -45,9 +46,9 @@ SCHEMA = {
 
 
 def build_system(cat) -> list[dict]:
-    parts = [(ENGINE_ROOT / "prompts" / "rank.md").read_text().strip()]
+    parts = [texts.read("prompts/rank.md").strip()]
     for name in ("priority.md", "bands.md"):
-        parts.append(f"# Definition: {name}\n\n" + (ENGINE_ROOT / "definitions" / name).read_text().strip())
+        parts.append(f"# Definition: {name}\n\n" + texts.read(f"definitions/{name}").strip())
     parts.append(f"# Category: {cat.name} ({cat.title})\n\n" + cat.body)
     return [{"type": "text", "text": "\n\n---\n\n".join(parts), "cache_control": {"type": "ephemeral"}}]
 
@@ -94,7 +95,7 @@ def _now() -> str:
 def run(cfg: Config, extract_dir: Path, dossier_dir: Path | None, display_dir: Path | None, out_dir: Path,
         only: set[str] | None, model: str, effort: str, dry_run: bool, force: bool = False, data_dir: Path | None = None) -> dict:
     from .render import load_display
-    cats = [c for c in load_categories(cfg.categories_dir) if not only or c.name in only]
+    cats = [c for c in load_categories(cfg.categories_dirs) if not only or c.name in only]
     recs = load_extract(extract_dir, None)
     if data_dir:
         from .ledgerview import build_view

@@ -54,7 +54,7 @@ def run(cfg: Config, extract_dir: Path, dossier_dir: Path, rank_dir: Path | None
         if_stale: bool = False, model: str | None = None, fmt: str = "lines", agreement_reads: int = 1) -> dict:
     from .render import load_rank, merge_rank
 
-    cats = load_categories(cfg.categories_dir)
+    cats = load_categories(cfg.categories_dirs)
     recs = load_extract(extract_dir, None)
     good = {n: d for n, d in load_latest(dossier_dir).items() if d.get("result")}
     chosen: dict[int, list[str]] = {}

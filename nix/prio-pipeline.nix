@@ -96,7 +96,7 @@ let
     # --- site (rank output, if any, from the weekly prio-rank service)
     log "render"
     prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
-    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
+    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ --exclude preview/ --exclude local/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     log "done"
     mark "done: site published"
   '';
@@ -113,6 +113,14 @@ let
     ${lib.optionalString (cfg.projectRepo != null) "export PRIO_PROJECT_REPO=${lib.escapeShellArg cfg.projectRepo}"}
     ${lib.optionalString cfg.ledger.shadow "export PRIO_SKIP_EXTRACT=1"}
     exec bash ${cfg.dataDir}/src/engine/scripts/ledger-run.sh
+  '';
+  localScript = pkgs.writeShellScript "prio-local" ''
+    set -euo pipefail
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.rsync pkgs.cacert py ]}:$PATH"
+    export PRIO_DATA_ROOT=${cfg.dataDir} PRIO_SITE=${lib.escapeShellArg cfg.siteDir}
+    mkdir -p ${cfg.dataDir}/logs
+    exec > >(tee -a ${cfg.dataDir}/logs/local-$(date -u +%Y%m%d-%H%M).log) 2>&1
+    exec bash ${cfg.dataDir}/src/engine/scripts/site-build.sh --config ${lib.escapeShellArg cfg.local.configDir} --out ${lib.escapeShellArg cfg.local.siteDir}
   '';
   rankScript = pkgs.writeShellScript "prio-rank" ''
     set -euo pipefail
@@ -138,7 +146,7 @@ let
     echo "[$(date -u +%FT%TZ)] render"
     prio render --extract "$D/extract" --dossier "$D/dossier" --display "$D/display" --rank "$D/rank" --out "$D/site.new"
     ''}
-    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
+    rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ --exclude preview/ --exclude local/ "$D/site.new/" ${lib.escapeShellArg cfg.siteDir}/
     echo "[$(date -u +%FT%TZ)] done"
     mark "done: ranking published"
   '';
@@ -150,6 +158,12 @@ in
       shadow = lib.mkOption { type = lib.types.bool; default = true; description = "true: render to siteDir/staging and reuse the daily run's extract (the old pipeline keeps the live site); false: the ledger pipeline is the daily run and renders the live site"; };
       reads = lib.mkOption { type = lib.types.int; default = 2; description = "seed reads per new PR, merged by union"; };
       onCalendar = lib.mkOption { type = lib.types.str; default = "*-*-* 02:30:00"; description = "ledger run schedule (shadow mode: after the daily run)"; };
+    };
+    local = {
+      enable = lib.mkOption { type = lib.types.bool; default = false; description = "render a second config (a private view) from the same data after the daily run, with scripts/site-build.sh; serving and auth are the host's nginx config"; };
+      configDir = lib.mkOption { type = lib.types.str; default = "${cfg.dataDir}/src/local"; description = "the second config's checkout (copied there by hand; not cloned by the service)"; };
+      siteDir = lib.mkOption { type = lib.types.str; default = "${cfg.siteDir}/local"; description = "where the second site goes; the daily rsync leaves local/ alone"; };
+      onCalendar = lib.mkOption { type = lib.types.str; default = "*-*-* 03:00:00"; description = "after the daily run and its render"; };
     };
     agreementReads = lib.mkOption { type = lib.types.int; default = 1; description = "2 = a second, thread-only read of the agreement merged by union (catches omitted objections; ~40% more dossier cost)"; };
     rankModel = lib.mkOption { type = lib.types.str; default = "claude-opus-5"; };
@@ -214,6 +228,17 @@ in
       description = "daily prio pipeline";
       wantedBy = [ "timers.target" ];
       timerConfig = { OnCalendar = cfg.onCalendar; Persistent = true; RandomizedDelaySec = "10m"; };
+    };
+    systemd.services.prio-local = lib.mkIf cfg.local.enable {
+      description = "prio: render the second (private) view from the same data";
+      after = [ "prio-ledger.service" ];
+      unitConfig.ConditionPathExists = "${cfg.local.configDir}/project.toml";
+      serviceConfig = { Type = "oneshot"; User = cfg.user; Group = cfg.user; ExecStart = localScript; TimeoutStartSec = "1h"; Nice = 10; };
+    };
+    systemd.timers.prio-local = lib.mkIf cfg.local.enable {
+      description = "daily render of the second view";
+      wantedBy = [ "timers.target" ];
+      timerConfig = { OnCalendar = cfg.local.onCalendar; Persistent = true; RandomizedDelaySec = "5m"; };
     };
     systemd.services.prio-rank = lib.mkIf (cfg.rankOnCalendar != null) {
       description = "prio ranking pass: compare all PRs in each changed category";

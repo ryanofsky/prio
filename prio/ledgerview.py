@@ -73,7 +73,7 @@ def _agreement(record: dict) -> dict:
                    "pin": c.get("pin")} for c in record["claims"]]
     support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url")}
                for s in record["support"]]
-    participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or ""} for p in record["participants"]]
+    participants = [{"login": p["login"], "stance": p.get("stance"), "note": p.get("note") or "", "association": p.get("association")} for p in record["participants"]]
     summary = f"{state}: {why}"
     reason = record.get("notes") or ("Derived from the claims and support below; every entry links to the statement it came from.")
     return {"state": state, "summary": summary, "reason": reason, "evidence": lines, "objections": objections, "support": support,
@@ -89,7 +89,7 @@ def _discussion(record: dict) -> dict:
 
 
 def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, dict]:
-    cats = {c.name: c for c in load_categories(cfg.categories_dir)}
+    cats = {c.name: c for c in load_categories(cfg.categories_dirs)}
     out: dict[int, dict] = {}
     for n, rec in recs.items():
         record = ledger.load(ledger.record_path(data_dir, rec["repo"], n))
@@ -103,7 +103,7 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
         if code is None:
             continue
         judgments = []
-        for p in sorted(glob.glob(str(judgment_path(data_dir, rec["repo"], "*", n)))):
+        for p in sorted(glob.glob(str(judgment_path(data_dir, rec["repo"], "*", n, cfg.data_prefix)))):
             j = _load(Path(p))
             if j and j["category"] in cats:
                 judgments.append(j)

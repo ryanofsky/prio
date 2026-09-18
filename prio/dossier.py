@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .categories import Category, load_categories
+from . import texts
 from .config import Config
 from .prices import cost_usd, usage_dict
 
@@ -186,9 +187,9 @@ SCHEMA = {
 # ----- prompt construction -----
 
 def build_system(cfg: Config, cats: list[Category]) -> list[dict]:
-    parts = [(ENGINE_ROOT / "prompts" / "dossier.md").read_text().strip()]
+    parts = [texts.read("prompts/dossier.md").strip()]
     for name in DEFINITIONS:
-        parts.append(f"# Definition: {name}\n\n" + (ENGINE_ROOT / "definitions" / name).read_text().strip())
+        parts.append(f"# Definition: {name}\n\n" + texts.read(f"definitions/{name}").strip())
     for c in cats:
         parts.append(f"# Category: {c.name} ({c.title})\n\n" + c.body)
     parts.append(
@@ -359,7 +360,7 @@ def request_params(model: str, system: list[dict], user: str, effort: str, max_t
 # ----- second, thread-only read of the agreement -----
 
 def agreement_system() -> list[dict]:
-    text = (ENGINE_ROOT / "prompts" / "agreement.md").read_text().strip() + "\n\n---\n\n# Definition: agreement.md\n\n" + (ENGINE_ROOT / "definitions" / "agreement.md").read_text().strip()
+    text = texts.read("prompts/agreement.md").strip() + "\n\n---\n\n# Definition: agreement.md\n\n" + texts.read("definitions/agreement.md").strip()
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
@@ -724,7 +725,7 @@ def cmd_submit(cfg: Config, extract_dir: Path, out_dir: Path, only: set[int] | N
                effort: str, budget_tokens: int, max_tokens: int, dry_run: bool, sync: bool, force: bool,
                git_dir: Path | None = None, patch_chars: int = 80000, max_cost: float | None = None,
                agreement_reads: int = 1) -> dict:
-    cats = load_categories(cfg.categories_dir)
+    cats = load_categories(cfg.categories_dirs)
     system = build_system(cfg, cats)
     ph = prompt_hash(system, agreement_system()[0]["text"] if agreement_reads > 1 else "")
     recs = load_extract(extract_dir, only)

@@ -33,6 +33,8 @@ class Category:
     extra: dict = field(default_factory=dict)
     kind: str = "model"
     not_in: list[str] = field(default_factory=list)
+    rule: str = "not_in"   # computed: "not_in" (every assessed PR in none of not_in) or "all" (every assessed PR)
+    sort: str | None = None  # computed: a column name whose sort key orders the rows; default newest first
 
     @property
     def computed(self) -> bool:
@@ -79,17 +81,27 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
     return meta, text[m.end():]
 
 
-def load_categories(cat_dir: Path, computed: bool = False) -> list[Category]:
-    """The model-judged categories; with ``computed=True`` the computed ones too."""
+def load_categories(cat_dirs: Path | list[Path], computed: bool = False) -> list[Category]:
+    """The model-judged categories; with ``computed=True`` the computed ones too.
+    Given several dirs (a config and the ones it inherits), a file in an
+    earlier dir shadows the same file name in a later one."""
+    dirs = [cat_dirs] if isinstance(cat_dirs, Path) else list(cat_dirs)
+    files: dict[str, Path] = {}
+    for d in reversed(dirs):
+        for p in d.glob("*.md"):
+            files[p.stem] = p
     cats: list[Category] = []
-    for p in sorted(cat_dir.glob("*.md")):
+    for stem, p in sorted(files.items()):
         meta, body = parse_front_matter(p.read_text())
-        known = {"title", "owner", "labels", "paths", "keywords", "kind", "not_in"}
+        known = {"title", "owner", "labels", "paths", "keywords", "kind", "not_in", "rule", "sort"}
         kind = meta.get("kind", "model")
         if kind not in ("model", "computed"):
             raise ValueError(f"{p}: unknown category kind {kind!r} (expected 'model' or 'computed')")
-        if kind == "computed" and not meta.get("not_in"):
-            raise ValueError(f"{p}: a computed category needs a 'not_in' list of category names")
+        rule = meta.get("rule", "all" if kind == "computed" and not meta.get("not_in") else "not_in")
+        if rule not in ("not_in", "all"):
+            raise ValueError(f"{p}: unknown rule {rule!r} (expected 'not_in' or 'all')")
+        if kind == "computed" and rule == "not_in" and not meta.get("not_in"):
+            raise ValueError(f"{p}: a computed category needs a 'not_in' list of category names (or rule: all)")
         if kind == "computed" and not computed:
             continue
         cats.append(Category(
@@ -103,11 +115,13 @@ def load_categories(cat_dir: Path, computed: bool = False) -> list[Category]:
             extra={k: v for k, v in meta.items() if k not in known},
             kind=kind,
             not_in=list(meta.get("not_in", [])),
+            rule=rule,
+            sort=meta.get("sort"),
         ))
     if computed:
         names = {c.name for c in cats}
         for c in cats:
             missing = [x for x in c.not_in if x not in names]
             if missing:
-                raise ValueError(f"{cat_dir / (c.name + '.md')}: not_in names unknown categories {missing}")
+                raise ValueError(f"{c.name}.md: not_in names unknown categories {missing}")
     return cats

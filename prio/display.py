@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import texts
 from .config import Config
 from .dossier import ENGINE_ROOT, _client, _result_payload, load_extract, dossier_stem, model_slug
 from .report import load_latest
@@ -38,7 +39,7 @@ SCHEMA = {
 
 
 def build_system() -> list[dict]:
-    return [{"type": "text", "text": (ENGINE_ROOT / "prompts" / "display.md").read_text().strip(),
+    return [{"type": "text", "text": texts.read("prompts/display.md").strip(),
              "cache_control": {"type": "ephemeral"}}]
 
 
