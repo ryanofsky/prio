@@ -199,7 +199,12 @@ def judge_user(rec: dict, record: dict, code: dict, cands: list[Category]) -> st
             "size": f"+{rec['additions']}/-{rec['deletions']} in {rec['changed_files']} files", "draft": rec["draft"], "created": rec["created_at"][:10],
             "changed_files": [f"{f['path']} +{f.get('add') or 0}/-{f.get('del') or 0}" for f in top] + ([f"... {len(files) - 40} more"] if len(files) > 40 else [])}
     desc = {k: code.get(k) for k in ("summary", "problem", "evidence", "dependencies", "scope_notes", "confidence")}
-    claims = [f"{c['author']} ({(c.get('association') or 'none').lower()}), {c['kind']}, {c['status']}{', blocking' if c.get('blocking') else ''}: {c.get('harm') or ''}"
+    def standing(c: dict) -> str:  # where an answered open claim stands, when the thread read has said
+        a = c.get("after_reply")
+        if not a or a == "no_reply":
+            return ", answered" if c.get("author_replies") or c.get("other_replies") else ", unanswered"
+        return f", answered, {a.replace('_', ' ')}" + (f" ({c['after_reply_note']})" if c.get("after_reply_note") else "")
+    claims = [f"{c['author']} ({(c.get('association') or 'none').lower()}), {c['kind']}, {c['status']}{', blocking' if c.get('blocking') else ''}{standing(c)}: {c.get('harm') or ''}"
               for c in record["claims"] if c.get("status") == "open"]
     support = [f"{s['author']} ({(s.get('association') or 'none').lower()}): {s.get('verdict') or 'no verdict word'}; {s.get('reason') or ''}" for s in record["support"]]
     cat_blocks = []
