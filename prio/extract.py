@@ -480,4 +480,8 @@ def run(cfg: Config, backup_dir: Path, out_dir: Path, only: set[int] | None = No
         rows.append(index_row(r))
     with open(out_dir / "index.json", "w") as f:
         json.dump({"extracted_at": stamp, "count": len(rows), "rows": rows}, f, indent=1)
+    if only is None:  # full run: out_prs should hold exactly this run's PRs, not
+        for p in out_prs.glob("*.json"):  # ones left behind from a day a PR was
+            if int(p.stem) not in records:  # still open (render globs this directory)
+                p.unlink()
     return {"count": len(rows), "out": str(out_dir)}
