@@ -102,7 +102,12 @@ let
   '';
   ledgerScript = pkgs.writeShellScript "prio-ledger" ''
     set -euo pipefail
-    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert pkgs.hostname pkgs.util-linux ]}:$PATH"
+    # openssh: ledger-run.sh pushes the data repo over ssh (its remote is a git@ URL with
+    # core.sshCommand pinned to a deploy key). Every other repo the run touches is https,
+    # so without this the pipeline works and only the push fails, with git reporting
+    # "Could not read from remote repository" — which reads like a permissions problem
+    # and is not one.
+    export PATH="${lib.makeBinPath [ pkgs.bash pkgs.git pkgs.coreutils pkgs.gawk pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.jq py pkgs.rsync pkgs.cacert pkgs.hostname pkgs.util-linux pkgs.openssh ]}:$PATH"
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     export PRIO_DATA_ROOT=${cfg.dataDir}
     export PRIO_LEDGER=${cfg.dataDir}/data

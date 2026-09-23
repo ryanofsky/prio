@@ -69,6 +69,17 @@ mkdir -p "$OUT"; rsync -a --delete --exclude status.html --exclude status.json -
 log "commit"
 git -C "$L" add -A
 git -C "$L" commit --quiet -m "run $(date -u +%F): $(git -C "$L" diff --cached --stat | tail -1)" || log "nothing to commit"
-if git -C "$L" remote get-url origin >/dev/null 2>&1; then git -C "$L" push --quiet origin HEAD 2>&1 | tail -1 || log "push to origin failed (see above); the commit is local"; fi
+if git -C "$L" remote get-url origin >/dev/null 2>&1; then
+  # Keep the WHOLE message. This was `| tail -1`, which of git's three-line failure
+  #   ERROR: … / fatal: Could not read from remote repository. /
+  #   Please make sure you have the correct access rights / and the repository exists.
+  # kept only the last line — the one that names no cause and reads almost reassuring —
+  # while "see above" pointed at output tail had already discarded. A missing `ssh` on
+  # PATH hid behind that for as long as the pipeline had been running.
+  if ! push_out=$(git -C "$L" push --quiet origin HEAD 2>&1); then
+    log "push to origin failed; the commit is local. git said:"
+    printf '%s\n' "$push_out" | sed 's/^/    /'
+  fi
+fi
 mark "done: site published"
 log "done"
