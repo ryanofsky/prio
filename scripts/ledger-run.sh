@@ -89,7 +89,10 @@ prio ledger migrate --data "$L" >/dev/null
 if [ -z "${PRIO_SKIP_MODEL:-}" ]; then
   log "thread reads"
   prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
-  prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
+  # Records read under an older schema are re-read whole within PRIO_REREAD_BUDGET dollars a
+  # run: those in the top five of a category on the last render first (docs/schema-history.md).
+  prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" \
+    --reread-budget "${PRIO_REREAD_BUDGET:-1.50}" --order "$OUT/data/order.json" 2>&1 | grep -E "PRs,|re-reads:|total|ERROR" || true
   mark "thread reads done"
   log "code assessments and judgments"
   prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true

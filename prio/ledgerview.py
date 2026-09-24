@@ -90,7 +90,7 @@ def _agreement(record: dict, nacks: list[str] | None = None) -> dict:
             "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": ledger.item_key(c), "at": c.get("at"),
             "status_at": (sb or {}).get("at"), "status_by": (sb or {}).get("by"),
             "resolution_evidence": (f"{sb.get('at')}: {sb.get('by')}: '{sb.get('quote', '')}'" if sb else ""),
-            "pin": c.get("pin")})
+            "pin": c.get("pin"), "from_schema": c.get("from_schema", ledger.SCHEMA)})
     support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url"),
                 "at": s.get("at"), "association": s.get("association"), "evidence": s.get("evidence"), "areas": s.get("areas") or []}
                for s in record["support"]]
@@ -136,7 +136,8 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
         result = {
             "summary": code.get("summary") or "", "problem": code.get("problem") or "", "card": code.get("card") or "",
             "evidence": code.get("evidence") or [], "scope_notes": code.get("scope_notes") or "", "changed_since_previous": code.get("changed_since_previous") or "",
-            "thread": {"last_event_at": record["processed"].get("last_event_at"), "events": len(record["processed"].get("events") or []), "head_sha": record["processed"].get("head_sha")},
+            "thread": {"last_event_at": record["processed"].get("last_event_at"), "events": len(record["processed"].get("events") or []), "head_sha": record["processed"].get("head_sha"),
+                       "schema_floor": record["processed"].get("schema_floor", ledger.SCHEMA), "schema": ledger.SCHEMA},
             "waiting_on": record.get("waiting_on") or [],
             "risk": code.get("risk"),
             "discussion": _discussion(record),

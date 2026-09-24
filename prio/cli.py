@@ -148,7 +148,11 @@ def main(argv: list[str] | None = None) -> int:
     lu.add_argument("--force", action="store_true", help="start every record from empty (re-seed)")
     lu.add_argument("--as-of", help="drift test: treat the extract as of this date (YYYY-MM-DD), dropping later statements")
     lu.add_argument("--run-kind", default="", help="suffix for the run id (e.g. replay)")
-    lu.add_argument("--reads", type=int, default=1, choices=[1, 2], help="2 = two reads merged by union for seed reads (fresh records)")
+    lu.add_argument("--reads", type=int, default=1, choices=[1, 2], help="2 = two reads merged by union for seed reads and re-reads")
+    lu.add_argument("--reread", action="store_true", help="re-read every record in --only that is below the current schema (docs/schema-history.md)")
+    lu.add_argument("--reread-budget", type=float, default=0.0, help="dollars (estimated) for re-reading records below the current schema; 0 = none")
+    lu.add_argument("--reread-top", type=int, default=5, help="re-read first records in this many top positions of a category in --order")
+    lu.add_argument("--order", type=Path, help="data/order.json from the last render (category order for --reread-budget)")
     lm = lgsub.add_parser("migrate", help="rewrite records to the current schema; judgments made from an unchanged record keep matching it")
     lm.add_argument("--data", required=True, type=Path)
     lm.add_argument("--dry-run", action="store_true")
@@ -243,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
         from . import ledgerrun
 
         res = ledgerrun.cmd_update(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.dry_run, args.prior,
-                                   force=args.force, as_of=args.as_of, run_kind=args.run_kind, reads=args.reads)
+                                   force=args.force, as_of=args.as_of, run_kind=args.run_kind, reads=args.reads, reread=args.reread,
+                                   reread_budget=args.reread_budget, reread_top=args.reread_top, order_file=args.order)
     elif args.cmd == "ledger" and args.lcmd == "assess":
         from . import stages
 

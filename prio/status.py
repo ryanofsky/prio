@@ -149,7 +149,19 @@ def ledger_runs(ledger_dir: Path, limit: int = 15) -> list[dict]:
 
 def counts(data_dir: Path, ledger_dir: Path, open_prs: set[int], code: dict[int, dict]) -> dict:
     idx = _read_json(data_dir / "extract" / "index.json") or {}
-    records = len([p for p in glob.glob(str(ledger_dir / "*" / "*" / "prs" / "*.json")) if int(Path(p).stem) in open_prs])
+    records = 0
+    floors: dict[int, int] = {}
+    from_schema: dict[int, int] = {}
+    for p in glob.glob(str(ledger_dir / "*" / "*" / "prs" / "*.json")):
+        if int(Path(p).stem) not in open_prs:
+            continue
+        records += 1
+        r = _read_json(Path(p)) or {}
+        f_ = (r.get("processed") or {}).get("schema_floor", 1)
+        floors[f_] = floors.get(f_, 0) + 1
+        for c in r.get("claims") or []:
+            v = c.get("from_schema", 1)
+            from_schema[v] = from_schema.get(v, 0) + 1
     displays = len([p for p in glob.glob(str(ledger_dir / "display" / "*" / "latest")) if int(Path(p).parent.name) in open_prs])
     ranks = {}
     for p in glob.glob(str(ledger_dir / "rank" / "*" / "latest")):
@@ -157,7 +169,7 @@ def counts(data_dir: Path, ledger_dir: Path, open_prs: set[int], code: dict[int,
         r = _read_json(Path(p).parent / f"{Path(p).read_text().strip()}.json") or {}
         ranks[cat] = (r.get("created") or "")[:16]
     return {"open_prs": idx.get("count"), "extracted_at": idx.get("extracted_at"), "records": records,
-            "code": len(code), "displays": displays, "ranked_categories": dict(sorted(ranks.items()))}
+            "code": len(code), "displays": displays, "schema_floor": dict(sorted(floors.items())), "claims_from_schema": dict(sorted(from_schema.items())), "ranked_categories": dict(sorted(ranks.items()))}
 
 
 def current_run(data_dir: Path) -> list[tuple[str, str]]:
@@ -231,6 +243,10 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     b.append(f'<h2>Data</h2><table><tr><td>Open PRs extracted</td><td>{_e(ct["open_prs"])} at {_e((ct["extracted_at"] or "")[:16])}</td></tr>'
              f'<tr><td>Open PRs with a thread record</td><td>{ct["records"]}</td></tr><tr><td>Open PRs with a code assessment</td><td>{ct["code"]}</td></tr>'
              f'<tr><td>Open PRs with display lines</td><td>{ct["displays"]}</td></tr>'
+             f'<tr><td>Thread records by the oldest schema their statements were read under '
+             f'(<a href="https://github.com/ryanofsky/prio/blob/main/docs/schema-history.md">history</a>)</td>'
+             f'<td>{_e(", ".join(f"schema {k}: {v}" for k, v in ct["schema_floor"].items()))}</td></tr>'
+             f'<tr><td>Claims by the schema they were last checked under</td><td>{_e(", ".join(f"schema {k}: {v}" for k, v in ct["claims_from_schema"].items()))}</td></tr>'
              f'<tr><td>Categories ranked</td><td>{_e(", ".join(f"{k} ({v})" for k, v in ct["ranked_categories"].items()) or "none")}</td></tr></table>')
     if ns["total"]:
         b.append('<h2>What the model says it was missing</h2><p class="muted">From the <code>needs</code> field of the latest code assessment of each open PR; recurring items are data-source work.</p>'

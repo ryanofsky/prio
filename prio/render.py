@@ -40,6 +40,7 @@ from .categories import load_categories
 from .config import Config
 from .report import load_latest
 from .dossier import dossier_stem
+from .ledger import SCHEMA
 
 REVIEWABILITY_COLORS = {"Ready": "#d9f2d9", "Stale": "#fff3c4", "Paused": "#ffd6d6"}
 AGREEMENT_COLORS = {
@@ -265,6 +266,8 @@ def _objections(ag: dict) -> str:
                 status += f' <span class="muted">· {_e(o["status_note"])}</span>'
             if o.get("pin"):
                 status += f' <span class="muted">· pinned by {_e(o["pin"].get("by"))}</span>'
+            if (o.get("from_schema") or SCHEMA) < SCHEMA:
+                status += f' <span class="muted">· <a href="{SCHEMA_HISTORY}">v{o["from_schema"]}</a>, not yet re-checked</span>'
             who = _e(o.get("reviewer")) + (f' <span class="muted">({_e(o["association"].lower())})</span>' if o.get("association") else "")
             quote = _t(o.get("evidence") or "")
             if o.get("url"):
@@ -649,6 +652,9 @@ def _pr_page(rec: dict, d: dict, cats: dict, disp: dict | None, ranks: dict[str,
     sec("Data", f'<a href="../data/dossier-{n}.json">dossier JSON</a> · <a href="../data/extract-{n}.json">extract JSON</a> · '
         f'model {_e(d.get("model"))}, generated {_e((d.get("created") or "")[:16])}, confidence {_e(r["confidence"])}, input hash {_e(d.get("input_hash"))}{src}'
         + (f'<br>thread read through {_e((th.get("last_event_at") or "")[:10])} ({th.get("events")} statements), head {_e((th.get("head_sha") or "")[:10])}' if th.get("last_event_at") else "")
+        + (f'<br><span class="muted">Discussion read under schema {th["schema_floor"]} rules: suggestions and questions may be missing, '
+           f'and an objection may combine several harms (<a href="{SCHEMA_HISTORY}">schema history</a>).</span>'
+           if (th.get("schema_floor") or SCHEMA) < SCHEMA else "")
         + f'<br>labels: {_e(", ".join(rec["labels"]) or "none")}{" · draft" if rec["draft"] else ""}')
     cat_secs = []
     for c in r["categories"]:
@@ -691,6 +697,7 @@ def load_rank(rank_dir: Path | None, cat_name: str) -> dict | None:
 
 
 BAND_ORDER = {"P1": 1, "P2": 2, "P3": 3, "P4": 4, "Unranked": 5}
+SCHEMA_HISTORY = "https://github.com/ryanofsky/prio/blob/main/docs/schema-history.md"
 
 
 def merge_rank(rows: list, rk: dict, dossiers: dict) -> list:
@@ -808,6 +815,9 @@ def render(cfg: Config, extract_dir: Path, dossier_dir: Path | None, out_dir: Pa
             continue
         rank_info[name] = rk
         members[name] = merge_rank(rows, rk, dossiers)
+    # Each category's order as shown, for the next run's re-read selection (ledger update --order).
+    with open(out_dir / "data" / "order.json", "w") as f:
+        json.dump({name: [n for _, n, _c in rows] for name, rows in members.items() if not (name in cats and cats[name].computed)}, f)
     ranks: dict[int, dict[str, tuple[int, int]]] = {}
     merged: dict[tuple[str, int], dict] = {}  # (category, PR) -> the row's entry after the ranking merge
     for name, rows in members.items():

@@ -65,7 +65,14 @@ def _call(model: str, system: list[dict], user: str, effort: str, max_tokens: in
 
 def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | None, model: str, effort: str,
                dry_run: bool, prior_dir: Path | None, max_tokens: int = 16000, force: bool = False,
-               as_of: str | None = None, run_kind: str = "", reads: int = 1) -> dict:
+               as_of: str | None = None, run_kind: str = "", reads: int = 1, reread: bool = False,
+               reread_budget: float = 0.0, reread_top: int = 5, order_file: Path | None = None) -> dict:
+    """Thread reads for PRs with new or edited statements. Records read
+    under an older schema (docs/schema-history.md) are re-read whole
+    instead: with ``reread`` every PR in ``only``; otherwise, within
+    ``reread_budget`` dollars (estimated, on the high side), first those in the top
+    ``reread_top`` of any category in ``order_file`` (the last render's
+    data/order.json), then those with new statements."""
     recs = load_extract(extract_dir, only)
     if as_of:
         recs = {n: ledger.as_of(r, as_of) for n, r in recs.items()}
@@ -76,29 +83,46 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
     manifest = {"id": run, "started": ledger._now(), "model": model, "prompt_hash": ph, "deltas": {}, "calls": [], "errors": [], "cost_usd": 0.0}
     client = None
     todo = []
+    behind = {}  # n -> (record, d, path) for records below the current schema
     for n, rec in recs.items():
         path = ledger.record_path(data_dir, rec["repo"], n)
         record = ledger.load(path) or ledger.new_record(rec)
         if force:
             record = ledger.new_record(rec)
         d = ledger.delta(record, rec)
+        if (record["processed"].get("schema_floor") or 1) < ledger.SCHEMA and not d["is_new"]:
+            behind[n] = (record, d, path)
         if ledger.is_empty(d):
             continue
         manifest["deltas"][f"{rec['repo']}#{n}"] = {k: v for k, v in d.items() if v}
         if ledger.needs_thread_update(d):
             todo.append((n, rec, record, d, path))
-        else:
+        elif n not in behind:
             ledger.mark_processed(record, rec)  # a push or description change alone: nothing for the thread read
             ledger.save(path, record)
-    print(f"{len(recs)} PRs, {len(manifest['deltas'])} with a delta, {len(todo)} thread reads", file=sys.stderr)
+    picked = _pick_rereads(behind, recs, {n for n, *_ in todo}, reread, reread_budget, reread_top, order_file, model, reads)
+    if picked:
+        queued = {n for n, *_ in todo}
+        for n in picked:
+            record, d, path = behind[n]
+            d["reread"] = True
+            if n not in queued:
+                todo.append((n, recs[n], record, d, path))
+        manifest["rereads"] = {"prs": picked, "budget": reread_budget, "top": reread_top}
+    for n, (record, d, path) in behind.items():  # below the schema, not re-read, only a push or description change
+        if n not in picked and not ledger.is_empty(d) and not ledger.needs_thread_update(d):
+            ledger.mark_processed(record, recs[n])
+            ledger.save(path, record)
+    print(f"{len(recs)} PRs, {len(manifest['deltas'])} with a delta, {len(todo)} thread reads ({len(picked)} re-reads; "
+          f"{len(behind)} records below schema {ledger.SCHEMA})", file=sys.stderr)
     if dry_run:
         tot = 0
         for n, rec, record, d, _ in todo:
-            _, user = ledger.build_thread_request(record, rec, d, _prior_text(prior_dir, n))
+            _, user = ledger.build_thread_request(record, rec, d, _prior_text(prior_dir, n) if d["is_new"] else None)
             tot += len(user)
-            print(f"  #{n}: {'seed' if d['is_new'] else 'update'}, {len(d['new'])} new, {len(d['edited'])} edited, user turn {len(user)} chars", file=sys.stderr)
+            print(f"  #{n}: {'seed' if d['is_new'] else 'reread' if d.get('reread') else 'update'}, {len(d['new'])} new, {len(d['edited'])} edited, user turn {len(user)} chars", file=sys.stderr)
         if todo:
-            _, user = ledger.build_thread_request(todo[0][2], todo[0][1], todo[0][3], _prior_text(prior_dir, todo[0][0]))
+            _, user = ledger.build_thread_request(todo[0][2], todo[0][1], todo[0][3], _prior_text(prior_dir, todo[0][0]) if todo[0][3]["is_new"] else None)
             print("\n===== SAMPLE USER TURN =====\n" + user[:5000] + ("\n...[truncated]" if len(user) > 5000 else ""))
         print(f"system ~{len(system[0]['text']) // 4} tokens; user turns ~{tot // 4} tokens total", file=sys.stderr)
         return {"dry_run": True, "reads": len(todo)}
@@ -108,8 +132,8 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
 
     def one(job):
         n, rec, record, d, path = job
-        sysm, user = ledger.build_thread_request(record, rec, d, _prior_text(prior_dir, n))
-        n_reads = reads if (d["is_new"] and reads > 1) else 1
+        sysm, user = ledger.build_thread_request(record, rec, d, _prior_text(prior_dir, n) if d["is_new"] else None)
+        n_reads = reads if ((d["is_new"] or d.get("reread")) and reads > 1) else 1
         msgs, parsed_list, err = [], [], None
         try:
             for _ in range(n_reads):
@@ -125,9 +149,10 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
         if isinstance(res, Exception):
             manifest["errors"].append(str(res)[:200]); continue
         (n, rec, record, d, path), sysm, user, n_reads, msgs, parsed_list, err = res
-        stem = f"{rec['repo'].replace('/', '-')}-{n}-{'seed' if d['is_new'] else 'thread'}"
+        stage = "seed" if d["is_new"] else "reread" if d.get("reread") else "thread"
+        stem = f"{rec['repo'].replace('/', '-')}-{n}-{stage}"
         with open(raw_dir / f"{stem}.request.json", "w") as f:
-            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model,
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": stage, "model": model,
                        "prompt_hash": ph, "system_chars": len(sysm[0]["text"]), "user": user}, f, indent=1)
         msg = msgs[0] if msgs else None
         text = "\n\n=== second read ===\n\n".join(next((b.text for b in m_.content if b.type == "text"), "") for m_ in msgs)
@@ -143,14 +168,16 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
             ledger.mark_processed(record, rec, d["new"] + d["edited"])
             report = ledger.apply_thread_response(record, rec, d, parsed, run)
             ledger.mark_processed(record, rec)
+            if d["is_new"] or d.get("reread"):
+                record["processed"]["schema_floor"] = ledger.SCHEMA
             ledger.log_entry(record, run, d["new"] + d["edited"], report["changes"], cost or 0)
             ledger.save(path, record)
         with open(raw_dir / f"{stem}.response.json", "w") as f:
-            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "model": model, "reads": n_reads,
+            json.dump({"run": run, "pr": f"{rec['repo']}#{n}", "stage": stage, "model": model, "reads": n_reads,
                        "created": ledger._now(), "stop_reason": getattr(msg, "stop_reason", None) if msg else None,
                        "usage": usage_dict(msg.usage) if msg else None, "cost_usd": cost, "error": err,
                        "raw_text": text, "result": parsed, "applied": report}, f, indent=1)
-        manifest["calls"].append({"pr": f"{rec['repo']}#{n}", "stage": "seed" if d["is_new"] else "thread", "cost_usd": cost, "error": err,
+        manifest["calls"].append({"pr": f"{rec['repo']}#{n}", "stage": stage, "cost_usd": cost, "error": err,
                                   "changes": len(report["changes"]) if report else 0, "rejected": len(report["rejected"]) if report else 0,
                                   "checks": len(report["checks"]) if report else 0})
         manifest["cost_usd"] += cost or 0
@@ -166,6 +193,42 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
     return {"run": run, "reads": len(todo), "cost_usd": round(manifest["cost_usd"], 4), "errors": len(manifest["errors"])}
 
 
+def _pick_rereads(behind: dict, recs: dict, active: set[int], explicit: bool, budget: float, top: int,
+                  order_file: Path | None, model: str, reads: int) -> list[int]:
+    """Which records below the current schema to re-read this run. With
+    ``explicit``, all of them. Otherwise within ``budget`` (an estimate from
+    each request's length at list prices, times the reads per request):
+    records in the top ``top`` of a category on the last render first, by
+    best position, then records with new statements, by PR number."""
+    if explicit:
+        return sorted(behind)
+    if budget <= 0 or not behind:
+        return []
+    best: dict[int, int] = {}
+    if order_file and order_file.exists():
+        with open(order_file) as f:
+            for rows in json.load(f).values():
+                for pos, n in enumerate(rows[:top]):
+                    best[n] = min(best.get(n, pos), pos)
+    order = sorted((n for n in behind if n in best), key=lambda n: (best[n], n)) + sorted(n for n in behind if n in active and n not in best)
+    from .openrouter import is_openrouter, prices
+    system = ledger.thread_system()[0]["text"]
+    # Per read: input from characters/3.5; output (reasoning included) about 1.1x the input, measured
+    # on the first re-reads (2026-09-24: 0.2x to 1.2x, cost $0.04 to $0.17 a PR with two reads).
+    pin, pout = (prices(model) if is_openrouter(model) else None) or (0.75, 3.75)
+    picked, spent = [], 0.0
+    for n in order:
+        record, d, _ = behind[n]
+        _, user = ledger.build_thread_request(record, recs[n], dict(d, reread=True))
+        tin = (len(system) + len(user)) / 3.5
+        est = (tin * pin + 1.1 * tin * pout) / 1e6 * max(reads, 1)
+        if spent + est > budget:
+            continue
+        picked.append(n); spent += est
+    print(f"re-reads: {len(picked)} of {len(order)} candidates, estimated ${spent:.2f} of ${budget:.2f}", file=sys.stderr)
+    return picked
+
+
 def cmd_migrate(data_dir: Path, dry_run: bool = False) -> dict:
     """Rewrite every record at an older schema (``ledger.upgrade_v1``).
     The rewrite changes how claims are stored, not what they say, so a
@@ -174,15 +237,22 @@ def cmd_migrate(data_dir: Path, dry_run: bool = False) -> dict:
     judged again. Idempotent; runs before each ledger update."""
     import glob
     from . import stages
-    records = judgments = 0
+    records = judgments = marked = 0
     statuses: dict[str, int] = {}
     for p in sorted(glob.glob(str(data_dir / "*" / "*" / "prs" / "*.json")) + glob.glob(str(data_dir / "*" / "*" / "prs" / "closed" / "*.json"))):
         with open(p) as f:
             raw = json.load(f)
+        if raw.get("schema") == ledger.SCHEMA:
+            if ledger.add_markers(raw):
+                marked += 1
+                if not dry_run:
+                    ledger.save(Path(p), raw)
+            continue
         if raw.get("schema") != 1:
             continue
         old = stages.claims_digest_v1(raw)
         ledger.upgrade_v1(raw)
+        ledger.add_markers(raw)
         new = stages.claims_digest(raw)
         for c in raw["claims"]:
             k = f"{c['clears_with']}/{c['status']}"
@@ -199,8 +269,8 @@ def cmd_migrate(data_dir: Path, dry_run: bool = False) -> dict:
                     stages._save(Path(jp), j)
         if not dry_run:
             ledger.save(Path(p), raw)
-    print(f"{records} records migrated, {judgments} judgments carried over" + (" (dry run)" if dry_run else ""), file=sys.stderr)
-    return {"records": records, "judgments": judgments, "claims": dict(sorted(statuses.items())), "dry_run": dry_run}
+    print(f"{records} records migrated, {judgments} judgments carried over, {marked} given schema markers" + (" (dry run)" if dry_run else ""), file=sys.stderr)
+    return {"records": records, "judgments": judgments, "marked": marked, "claims": dict(sorted(statuses.items())), "dry_run": dry_run}
 
 
 def cmd_show(data_dir: Path, repo: str, n: int) -> str:
