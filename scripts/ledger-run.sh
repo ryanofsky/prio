@@ -11,7 +11,15 @@
 # repo checkout; created with git init if missing), PRIO_SITE_OUT=
 # $PRIO_DATA_ROOT/site/staging, PRIO_MODEL, PRIO_RANK_DIR=$PRIO_LEDGER/rank,
 # PRIO_READS=2 (seed reads), PRIO_MAX_COST (informational), PRIO_SKIP_EXTRACT=1
-# to reuse the daily run's extract, PRIO_ONLY=@file or list to restrict.
+# to reuse the daily run's extract, PRIO_SKIP_MODEL=1 to skip the three
+# model-calling stages (thread reads, code assessments, display lines) and
+# just re-render the existing ledger data — for an extract- or render-only
+# fix, no API cost — PRIO_ONLY=@file or list to restrict.
+#
+# New PRIO_SKIP_* / PRIO_ONLY-style toggles must stay names this script reads
+# itself, not ones the NixOS module's wrapper script already exports (see
+# nix/prio-pipeline.nix's ledgerScript) — the wrapper's own `export FOO=...`
+# lines would otherwise shadow anything passed in from outside it.
 set -euo pipefail
 D=${PRIO_DATA_ROOT:-/var/lib/prio}; L=${PRIO_LEDGER:-$D/data}; OUT=${PRIO_SITE_OUT:-$D/site/staging}
 MODEL=${PRIO_MODEL:-openrouter/google/gemini-3.8-flash}; RANK=${PRIO_RANK_DIR:-$L/rank}
@@ -54,15 +62,19 @@ if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
   mark "extract done"
 fi
 
-log "thread reads"
-prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
-prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
-mark "thread reads done"
-log "code assessments and judgments"
-prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
-mark "code assessments and judgments done"
-log "display lines"
-prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
+if [ -z "${PRIO_SKIP_MODEL:-}" ]; then
+  log "thread reads"
+  prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
+  prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs,|total|ERROR" || true
+  mark "thread reads done"
+  log "code assessments and judgments"
+  prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
+  mark "code assessments and judgments done"
+  log "display lines"
+  prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
+else
+  log "skipping thread reads, code assessments, and display lines (PRIO_SKIP_MODEL); rendering the existing ledger data"
+fi
 log "render to $OUT"
 prio render --extract "$D/extract" --data "$L" --display "$L/display" --rank "$RANK" --out "$L/site.new" >/dev/null
 mkdir -p "$OUT"; rsync -a --delete --exclude status.html --exclude status.json --exclude status/ --exclude staging/ --exclude preview/ --exclude local/ "$L/site.new/" "$OUT/"; rm -rf "$L/site.new"
