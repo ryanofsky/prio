@@ -11,10 +11,13 @@
 # repo checkout; created with git init if missing), PRIO_SITE_OUT=
 # $PRIO_DATA_ROOT/site/staging, PRIO_MODEL, PRIO_RANK_DIR=$PRIO_LEDGER/rank,
 # PRIO_READS=2 (seed reads), PRIO_MAX_COST (informational), PRIO_SKIP_EXTRACT=1
-# to reuse the daily run's extract, PRIO_SKIP_MODEL=1 to skip the three
-# model-calling stages (thread reads, code assessments, display lines) and
-# just re-render the existing ledger data — for an extract- or render-only
-# fix, no API cost — PRIO_ONLY=@file or list to restrict.
+# to reuse the daily run's extract, PRIO_SKIP_GIT=1 to reuse $D/git as-is instead
+# of re-fetching every open PR's head (the slowest step by far, well before any
+# model call — set this whenever the fix doesn't depend on fresh changed-files/
+# size data), PRIO_SKIP_MODEL=1 to skip the three model-calling stages (thread
+# reads, code assessments, display lines) and just re-render the existing
+# ledger data — for an extract- or render-only fix, no API cost — PRIO_ONLY=
+# @file or list to restrict.
 #
 # New PRIO_SKIP_* / PRIO_ONLY-style toggles must stay names this script reads
 # itself, not ones the NixOS module's wrapper script already exports (see
@@ -56,7 +59,11 @@ log "engine $(git -C "$D/src/engine" rev-parse --short HEAD), config $(git -C "$
 
 if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
   log "extract"
-  prio git --repo "$D/bitcoin.git" --url "${PRIO_PROJECT_REPO:-https://github.com/bitcoin/bitcoin.git}" --extract "$D/extract" --out "$D/git" --budget-chars "${PRIO_PATCH_CHARS:-40000}" >/dev/null 2>>"$D/git.log" || true
+  if [ -z "${PRIO_SKIP_GIT:-}" ]; then
+    prio git --repo "$D/bitcoin.git" --url "${PRIO_PROJECT_REPO:-https://github.com/bitcoin/bitcoin.git}" --extract "$D/extract" --out "$D/git" --budget-chars "${PRIO_PATCH_CHARS:-40000}" >/dev/null 2>>"$D/git.log" || true
+  else
+    log "skipping the git sidecar (PRIO_SKIP_GIT); reusing \$D/git as it is — the slowest step, one fetch per open PR"
+  fi
   bash "$D/src/engine/scripts/refs-index.sh" "${PRIO_BACKUP:-/var/lib/github-metadata-backup/data/bitcoin/bitcoin}" > "$D/refs-index.tsv"
   prio extract --backup "${PRIO_BACKUP:-/var/lib/github-metadata-backup/data/bitcoin/bitcoin}" --out "$D/extract" --refs-index "$D/refs-index.tsv" --git "$D/git" >/dev/null
   mark "extract done"
