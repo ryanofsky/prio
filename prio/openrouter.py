@@ -41,6 +41,22 @@ def _key() -> str:
     return k
 
 
+def _response_error(out: dict) -> str | None:
+    """Describe the failure reported inside a 200 response, or None."""
+    choice = (out.get("choices") or [{}])[0]
+    err = out.get("error") or choice.get("error")
+    if not err and choice.get("finish_reason") != "error":
+        return None
+    if isinstance(err, dict):
+        detail = err.get("message") or json.dumps(err)
+        if err.get("code") is not None:
+            detail = f"{err['code']}: {detail}"
+    else:
+        detail = str(err or "no details")
+    provider = out.get("provider")
+    return f"{detail} (provider {provider})" if provider else detail
+
+
 def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, max_tokens: int, retries: int = 3):
     """One chat completion. Returns an object shaped like the Anthropic SDK's
     message as far as the pipeline reads it: .content[0].text, .stop_reason,
@@ -71,7 +87,20 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
         try:
             with urllib.request.urlopen(req, timeout=600) as resp:
                 out = json.load(resp)
-            break
+            # OpenRouter can answer HTTP 200 and still report a failure: a
+            # top-level "error" object, or finish_reason "error" (with the
+            # details in choices[0].error) when the upstream provider failed
+            # mid-request. The content is then empty; treat it as transient
+            # rather than returning it as a normal empty response, which would
+            # only surface later as a JSON parse error.
+            err = _response_error(out)
+            if err is None:
+                break
+            last = f"OpenRouter error in HTTP 200 response: {err}"
+            if attempt < retries - 1:
+                time.sleep(5 * (attempt + 1))
+                continue
+            raise RuntimeError(last)
         except urllib.error.HTTPError as e:
             body_text = e.read()[:300].decode(errors="replace")
             last = f"HTTP {e.code}: {body_text}"
