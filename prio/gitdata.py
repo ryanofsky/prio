@@ -75,13 +75,21 @@ def fetch_prs(repo: Path, prs: dict[int, str], default_branch: str = "master",
             status[n] = "present"
         else:
             need.append(n)
-    # Fetch in chunks; one refspec per PR.
+    # Fetch in chunks; one refspec per PR. One missing ref fails the whole
+    # fetch (GitHub has no refs/pull/33973/head for open PR #33973), so a
+    # failed chunk is retried one PR at a time to fetch the rest of it.
+    def fetch(nums: list[int]):
+        specs = [f"+{pull_ref.format(n=n)}:refs/prio/pull/{n}" for n in nums]
+        return subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", *specs], capture_output=True, text=True)
     for i in range(0, len(need), 25):
         chunk = need[i:i + 25]
-        specs = [f"+{pull_ref.format(n=n)}:refs/prio/pull/{n}" for n in chunk]
-        r = subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", *specs], capture_output=True, text=True)
+        r = fetch(chunk)
         for n in chunk:
-            status[n] = "fetched" if r.returncode == 0 else f"fetch failed: {r.stderr.strip()[:200]}"
+            if r.returncode != 0 and len(chunk) > 1:
+                r1 = fetch([n])
+                status[n] = "fetched" if r1.returncode == 0 else f"fetch failed: {r1.stderr.strip()[:200]}"
+            else:
+                status[n] = "fetched" if r.returncode == 0 else f"fetch failed: {r.stderr.strip()[:200]}"
     return status
 
 
