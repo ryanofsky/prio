@@ -26,6 +26,20 @@
 set -euo pipefail
 D=${PRIO_DATA_ROOT:-/var/lib/prio}; L=${PRIO_LEDGER:-$D/data}; OUT=${PRIO_SITE_OUT:-$D/site/staging}
 MODEL=${PRIO_MODEL:-openrouter/google/gemini-3.8-flash}; RANK=${PRIO_RANK_DIR:-$L/rank}
+
+# This script lives at $D/src/engine/scripts/ledger-run.sh, i.e. inside the
+# checkout the loop below updates. bash reads a script's text as it starts
+# running it, so a `git pull` further down would change the file on disk
+# without changing what the already-running interpreter executes for the
+# rest of THIS run — a change here would take effect one run later than
+# expected. Confirmed with a real `git pull` (a plain in-place rewrite does
+# not reproduce it; only git's actual checkout mechanism does, 2026-09-24).
+# Re-exec right after the pull so the rest of the run always reads fresh.
+if [ -z "${_PRIO_REEXEC:-}" ]; then
+  for name in engine config; do git -C "$D/src/$name" pull --quiet --ff-only || true; done
+  export _PRIO_REEXEC=1
+  exec bash "$0" "$@"
+fi
 cd "$D"
 # One run at a time: a second start while a run holds the lock exits at once.
 exec 9>"$D/ledger-run.lock"
@@ -54,7 +68,6 @@ if [ ! -d "$L/.git" ]; then
     git -C "$L" add archive && git -C "$L" commit --quiet -m "archive: dossier, display, and rank files from the per-input-hash pipeline" || true
   fi
 fi
-for name in engine config; do git -C "$D/src/$name" pull --quiet --ff-only || true; done
 log "engine $(git -C "$D/src/engine" rev-parse --short HEAD), config $(git -C "$D/src/config" rev-parse --short HEAD)"
 
 if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
