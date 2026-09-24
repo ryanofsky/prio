@@ -52,7 +52,7 @@ exec > >(tee -a "$D/logs/ledger-$(date -u +%Y%m%d-%H%M).log") 2>&1
 prio() { "$D/venv/bin/python" -m prio.cli --config "$D/src/config" "$@"; }
 SCHED=${PRIO_SCHEDULE_TEXT:-Daily ledger run at 01:00 UTC; weekly ranking pass on Sundays at 04:00 UTC.}
 LIVE_SITE=${PRIO_LIVE_SITE:-$D/site}
-mark() { mkdir -p "$D/status"; echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"; prio status-page --data-dir "$D" --site-dir "$LIVE_SITE" --next-runs "$SCHED" >/dev/null 2>&1 || true; }
+mark() { mkdir -p "$D/status"; echo "$(date -u +%FT%TZ) $*" >> "$D/status/current.log"; prio status-page --data-dir "$D" --ledger "$L" --site-dir "$LIVE_SITE" --next-runs "$SCHED" >/dev/null 2>&1 || true; }
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 trap 'mark "FAILED at line $LINENO"' ERR
 : > "$D/status/current.log" 2>/dev/null || mkdir -p "$D/status"; mark "ledger run started"

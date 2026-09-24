@@ -171,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--site-dir", required=True, type=Path)
     st.add_argument("--next-runs", default="", help="text describing the schedule")
     st.add_argument("--no-lookup", action="store_true", help="do not query the API for in-progress batches")
+    st.add_argument("--ledger", type=Path, help="ledger pipeline data dir (default: DATA_DIR/data)")
 
     rd = sub.add_parser("render", help="stage 5: render extract + dossiers to a static site")
     rd.add_argument("--extract", required=True, type=Path)
@@ -253,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "status-page":
         from . import status
 
-        res = status.render(args.data_dir, args.site_dir, args.next_runs, not args.no_lookup)
+        res = status.render(args.data_dir, args.site_dir, args.next_runs, not args.no_lookup, ledger_dir=args.ledger)
     elif args.cmd == "rank":
         from . import rank
 

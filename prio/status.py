@@ -6,6 +6,14 @@ already keeps: the current run's step marks, batch manifests, stored
 model outputs with their cost, and the run logs. Needs no model call.
 Batches still marked in progress are looked up on the API when a key is
 available, so the page shows their real state.
+
+Two layouts are read. The ledger pipeline, which the daily run uses since
+2026-09-17, keeps everything under the ledger directory (``<data>/data``
+by default): run manifests in ``runs/``, display lines and ranking passes
+in ``display/`` and ``rank/``, and per-PR thread records and code
+assessments in ``<owner>/<repo>/prs`` and ``<owner>/<repo>/code``. The
+older dossier pipeline kept ``dossier/``, ``display/`` and ``rank/``
+directly under ``<data>``; those still count toward spend.
 """
 
 from __future__ import annotations
@@ -64,12 +72,14 @@ def batch_rows(data_dir: Path, lookup: bool) -> list[dict]:
     return rows
 
 
-def spend(data_dir: Path) -> dict:
-    """Cost by month from every stored model output (dossier, display, rank)."""
+def spend(data_dir: Path, ledger_dir: Path) -> dict:
+    """Cost by month from every stored model output (dossier, display, rank)
+    and every ledger run manifest (thread reads, code assessments, judgments)."""
     by_month: dict[str, float] = {}
     n = 0
-    for stage in ("dossier", "display", "rank"):
-        for p in glob.glob(str(data_dir / stage / "*" / "*.json")):
+    stage_dirs = [data_dir / s for s in ("dossier", "display", "rank")] + [ledger_dir / s for s in ("display", "rank")]
+    for stage_dir in stage_dirs:
+        for p in glob.glob(str(stage_dir / "*" / "*.json")):
             if "/batches/" in p:
                 continue
             d = _read_json(Path(p))
@@ -78,7 +88,7 @@ def spend(data_dir: Path) -> dict:
             month = (d.get("created") or "")[:7]
             by_month[month] = by_month.get(month, 0.0) + (d.get("cost_usd") or 0.0)
             n += 1
-    for p in glob.glob(str(data_dir / "data" / "runs" / "*.json")):  # ledger pipeline runs
+    for p in glob.glob(str(ledger_dir / "runs" / "*.json")):
         m = _read_json(Path(p)) or {}
         month = (m.get("started") or "")[:7]
         by_month[month] = by_month.get(month, 0.0) + (m.get("cost_usd") or 0.0)
@@ -86,28 +96,49 @@ def spend(data_dir: Path) -> dict:
     return {"by_month": dict(sorted(by_month.items(), reverse=True)), "outputs": n}
 
 
-def needs_summary(data_dir: Path) -> dict:
-    """How often dossiers report each missing input, and low-confidence PRs."""
-    needs: dict[str, int] = {}
-    low = []
-    total = 0
-    for p in glob.glob(str(data_dir / "dossier" / "*" / "latest")):
-        d = _read_json(Path(p).parent / f"{Path(p).read_text().strip()}.json") or {}
-        r = d.get("result") or {}
-        if not r:
+def _open_numbers(data_dir: Path) -> set[int]:
+    idx = _read_json(data_dir / "extract" / "index.json") or {}
+    return {r["number"] for r in idx.get("rows") or []}
+
+
+def latest_code(ledger_dir: Path, open_prs: set[int]) -> dict[int, dict]:
+    """The most recent code assessment of each open PR. A PR has one file per
+    patch it was assessed at; the newest ``assessed_at`` is the current one."""
+    out: dict[int, dict] = {}
+    for p in glob.glob(str(ledger_dir / "*" / "*" / "code" / "*" / "*.json")):
+        n = int(Path(p).parent.name)
+        if n not in open_prs:
             continue
-        total += 1
-        for x in r.get("needs") or []:
+        d = _read_json(Path(p))
+        if d and (n not in out or (d.get("assessed_at") or "") > (out[n].get("assessed_at") or "")):
+            out[n] = d
+    return out
+
+
+def needs_summary(code: dict[int, dict]) -> dict:
+    """How often code assessments report each missing input, how confident
+    they are, and the uncertainties they state."""
+    needs: dict[str, int] = {}
+    conf: dict[str, int] = {}
+    unsure = []
+    for n, d in sorted(code.items()):
+        for x in d.get("needs") or []:
             needs[x] = needs.get(x, 0) + 1
-        if r.get("confidence") == "low":
-            low.append(int(Path(p).parent.name))
-    return {"total": total, "needs": dict(sorted(needs.items(), key=lambda kv: -kv[1])), "low_confidence": sorted(low)}
+        c = d.get("confidence") or "unknown"
+        conf[c] = conf.get(c, 0) + 1
+        if c != "high" or d.get("uncertainties"):
+            unsure.append({"number": n, "confidence": c, "uncertainties": d.get("uncertainties") or [],
+                           "archive": d.get("run") == "archive", "assessed_at": (d.get("assessed_at") or "")[:10]})
+    order = {"low": 0, "medium": 1, "unknown": 2, "high": 3}
+    unsure.sort(key=lambda u: (order.get(u["confidence"], 2), u["number"]))
+    return {"total": len(code), "needs": dict(sorted(needs.items(), key=lambda kv: -kv[1])),
+            "confidence": conf, "uncertain": unsure}
 
 
-def ledger_runs(data_dir: Path, limit: int = 15) -> list[dict]:
-    """The ledger pipeline's run manifests (data/runs/*.json), newest first."""
+def ledger_runs(ledger_dir: Path, limit: int = 15) -> list[dict]:
+    """The ledger pipeline's run manifests (runs/*.json), newest first."""
     out = []
-    for p in sorted(glob.glob(str(data_dir / "data" / "runs" / "*.json")), reverse=True)[:limit]:
+    for p in sorted(glob.glob(str(ledger_dir / "runs" / "*.json")), reverse=True)[:limit]:
         m = _read_json(Path(p)) or {}
         calls = m.get("calls") or []
         out.append({"id": m.get("id") or Path(p).stem, "started": (m.get("started") or "")[:16], "calls": len(calls),
@@ -116,17 +147,17 @@ def ledger_runs(data_dir: Path, limit: int = 15) -> list[dict]:
     return out
 
 
-def counts(data_dir: Path) -> dict:
+def counts(data_dir: Path, ledger_dir: Path, open_prs: set[int], code: dict[int, dict]) -> dict:
     idx = _read_json(data_dir / "extract" / "index.json") or {}
-    dossiers = len([p for p in glob.glob(str(data_dir / "dossier" / "*" / "latest"))])
-    displays = len([p for p in glob.glob(str(data_dir / "display" / "*" / "latest"))])
+    records = len([p for p in glob.glob(str(ledger_dir / "*" / "*" / "prs" / "*.json")) if int(Path(p).stem) in open_prs])
+    displays = len([p for p in glob.glob(str(ledger_dir / "display" / "*" / "latest")) if int(Path(p).parent.name) in open_prs])
     ranks = {}
-    for p in glob.glob(str(data_dir / "rank" / "*" / "latest")):
+    for p in glob.glob(str(ledger_dir / "rank" / "*" / "latest")):
         cat = Path(p).parent.name
         r = _read_json(Path(p).parent / f"{Path(p).read_text().strip()}.json") or {}
         ranks[cat] = (r.get("created") or "")[:16]
-    return {"open_prs": idx.get("count"), "extracted_at": idx.get("extracted_at"), "dossiers": dossiers,
-            "displays": displays, "ranked_categories": dict(sorted(ranks.items()))}
+    return {"open_prs": idx.get("count"), "extracted_at": idx.get("extracted_at"), "records": records,
+            "code": len(code), "displays": displays, "ranked_categories": dict(sorted(ranks.items()))}
 
 
 def current_run(data_dir: Path) -> list[tuple[str, str]]:
@@ -140,14 +171,18 @@ def current_run(data_dir: Path) -> list[tuple[str, str]]:
     return out
 
 
-def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, log_count: int = 10) -> dict:
+def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, log_count: int = 10,
+           ledger_dir: Path | None = None) -> dict:
     site_dir.mkdir(parents=True, exist_ok=True)
+    ledger_dir = ledger_dir or data_dir / "data"
     steps = current_run(data_dir)
     batches = batch_rows(data_dir, lookup)
-    sp = spend(data_dir)
-    ct = counts(data_dir)
-    ns = needs_summary(data_dir)
-    lr = ledger_runs(data_dir)
+    sp = spend(data_dir, ledger_dir)
+    open_prs = _open_numbers(data_dir)
+    code = latest_code(ledger_dir, open_prs)
+    ct = counts(data_dir, ledger_dir, open_prs, code)
+    ns = needs_summary(code)
+    lr = ledger_runs(ledger_dir)
     logs = sorted(glob.glob(str(data_dir / "logs" / "*.log")), reverse=True)[:log_count]
     (site_dir / "status" / "logs").mkdir(parents=True, exist_ok=True)
     log_links = []
@@ -178,15 +213,14 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     else:
         b.append('<p>No run recorded yet.</p>')
     b.append(f'<h2>Schedule</h2><p>{_e(next_runs)}</p>')
-    b.append('<h2>Batches (Anthropic Batch API)</h2><p class="muted">Model work is submitted as batches and collected when they end, usually within an hour, up to 24 hours.</p>')
-    if batches:
+    pending = [r for r in batches if r["status"] != "collected"]
+    if pending:
+        b.append('<h2>Batches (Anthropic Batch API)</h2><p class="muted">Model work is submitted as batches and collected when they end, usually within an hour, up to 24 hours.</p>')
         b.append('<table><tr><th>Stage</th><th>Created</th><th>Model</th><th>Requests</th><th>Status</th><th>OK</th><th>Failed</th><th>Cost</th></tr>'
                  + "".join(f'<tr><td>{_e(r["stage"])}</td><td>{_e((r["created"] or "")[:16])}</td><td>{_e(r["model"])}</td><td>{r["requests"]}</td>'
                            f'<td>{_e(r["status"])}{(" · " + str(r.get("processing")) + " processing") if r.get("processing") else ""}</td>'
                            f'<td>{_e(r["succeeded"] if r["succeeded"] is not None else "")}</td><td>{_e(r["failed"] if r["failed"] is not None else "")}</td>'
-                           f'<td>{("$%.2f" % r["cost_usd"]) if r.get("cost_usd") is not None else ""}</td></tr>' for r in batches[:20]) + '</table>')
-    else:
-        b.append('<p>None.</p>')
+                           f'<td>{("$%.2f" % r["cost_usd"]) if r.get("cost_usd") is not None else ""}</td></tr>' for r in pending[:20]) + '</table>')
     if lr:
         b.append('<h2>Ledger pipeline runs</h2><p class="muted">Incremental PR records: each run reads only what changed. Requests and responses are kept under <code>data/raw/</code>.</p>'
                  '<table><tr><th>Run</th><th>Started</th><th>PRs with a delta</th><th>Calls</th><th>Cost</th><th>Errors</th></tr>'
@@ -195,12 +229,22 @@ def render(data_dir: Path, site_dir: Path, next_runs: str, lookup: bool = True, 
     b.append('<h2>Spend (estimated from token usage, list prices)</h2><table><tr><th>Month</th><th>USD</th></tr>'
              + "".join(f'<tr><td>{_e(m)}</td><td>${v:.2f}</td></tr>' for m, v in sp["by_month"].items()) + f'</table><p class="muted">{sp["outputs"]} stored model outputs.</p>')
     b.append(f'<h2>Data</h2><table><tr><td>Open PRs extracted</td><td>{_e(ct["open_prs"])} at {_e((ct["extracted_at"] or "")[:16])}</td></tr>'
-             f'<tr><td>PRs with a dossier</td><td>{ct["dossiers"]}</td></tr><tr><td>PRs with display lines</td><td>{ct["displays"]}</td></tr>'
+             f'<tr><td>Open PRs with a thread record</td><td>{ct["records"]}</td></tr><tr><td>Open PRs with a code assessment</td><td>{ct["code"]}</td></tr>'
+             f'<tr><td>Open PRs with display lines</td><td>{ct["displays"]}</td></tr>'
              f'<tr><td>Categories ranked</td><td>{_e(", ".join(f"{k} ({v})" for k, v in ct["ranked_categories"].items()) or "none")}</td></tr></table>')
     if ns["total"]:
-        b.append('<h2>What the model says it was missing</h2><p class="muted">From the <code>needs</code> field of each dossier; recurring items are data-source work.</p>'
-                 + ('<table><tr><th>Missing input</th><th>Dossiers</th></tr>' + "".join(f'<tr><td>{_e(k)}</td><td>{v}</td></tr>' for k, v in ns["needs"].items()) + '</table>' if ns["needs"] else '<p>Nothing reported.</p>')
-                 + (f'<p>Low-confidence assessments: {", ".join("#" + str(n) for n in ns["low_confidence"][:40])}</p>' if ns["low_confidence"] else ""))
+        b.append('<h2>What the model says it was missing</h2><p class="muted">From the <code>needs</code> field of the latest code assessment of each open PR; recurring items are data-source work.</p>'
+                 + ('<table><tr><th>Missing input</th><th>PRs</th></tr>' + "".join(f'<tr><td>{_e(k)}</td><td>{v}</td></tr>' for k, v in ns["needs"].items()) + '</table>' if ns["needs"] else '<p>Nothing reported.</p>'))
+        conf = ", ".join(f'{_e(k)} {v}' for k, v in sorted(ns["confidence"].items(), key=lambda kv: {"low": 0, "medium": 1, "high": 2}.get(kv[0], 3)))
+        b.append(f'<h2>Uncertainty</h2><p>Code assessment confidence over {ns["total"]} open PRs: {conf}.</p>'
+                 '<p class="muted">Every PR whose latest code assessment is below high confidence or states an uncertainty, least confident first. '
+                 '"archive" marks an assessment copied from the older dossier pipeline.</p>')
+        if ns["uncertain"]:
+            b.append('<table><tr><th>PR</th><th>Confidence</th><th>Assessed</th><th>Uncertainties</th></tr>'
+                     + "".join(f'<tr><td><a href="pr/{u["number"]}.html">#{u["number"]}</a></td><td>{_e(u["confidence"])}</td>'
+                               f'<td>{_e(u["assessed_at"])}{" (archive)" if u["archive"] else ""}</td>'
+                               f'<td>{"<br>".join(_e(x) for x in u["uncertainties"]) or "<span class=muted>none stated</span>"}</td></tr>' for u in ns["uncertain"])
+                     + '</table>')
     b.append('<h2>Run logs</h2>' + ('<ul>' + "".join(f'<li><a href="status/logs/{_e(n)}">{_e(n)}</a></li>' for n in log_links) + '</ul>' if log_links else '<p>None yet.</p>'))
     b.append('</body></html>')
     (site_dir / "status.html").write_text("".join(b))
