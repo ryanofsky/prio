@@ -615,7 +615,7 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
 
 # ----- derived state (computed, never stored as truth) -----
 
-def derive_agreement(record: dict) -> tuple[str, str]:
+def derive_agreement(record: dict, nacks: list[str] | None = None) -> tuple[str, str]:
     """Agreement state from the record (definitions/agreement.md). Only
     objections naming a harm move it; suggestions and questions never do.
 
@@ -624,7 +624,14 @@ def derive_agreement(record: dict) -> tuple[str, str]:
     | clears w/answer | Mild    | resolved | Mild      | resolved       | Positive w/ caveats |
 
     The hardest objection sets the state; support decides the positive end
-    once nothing holds it lower."""
+    once nothing holds it lower.
+
+    ``nacks``: reviewers whose current verdict in DrahtBot's review table is
+    a NACK (Concept, Approach, or plain); the table shows each reviewer's
+    latest verdict, so a NACK there has not been withdrawn. A NACK from a
+    reviewer with a recorded harm holds the state at Mild at most, whatever
+    the status of that objection; one with no harm recorded ("not worth the
+    review effort") is named in the detail but does not move the state."""
     obj = [c for c in record["claims"] if (c.get("type") or "objection") == "objection" and (c.get("harm") or "").strip()]
     def names(items) -> str:
         seen = []
@@ -641,24 +648,33 @@ def derive_agreement(record: dict) -> tuple[str, str]:
         return "Disputed", f"objection that needs a change, the objector pushed back after a reply ({names(disputed)})"
     answered = [c for c in change if c["status"] == "answered"]
     mild = [c for c in obj if c.get("clears_with") != "change" and c["status"] in ("open", "contested")]
-    if answered or mild:
+    held = {c["author"] for c in answered + mild}
+    nack_harm = {n: [c for c in obj if c["author"] == n] for n in dict.fromkeys(nacks or [])}
+    standing = {n: cs for n, cs in nack_harm.items() if cs and n not in held}
+    unrecorded = [n for n, cs in nack_harm.items() if not cs]
+    tail = f"; NACK with no harm recorded ({', '.join(unrecorded)})" if unrecorded else ""
+    if answered or mild or standing:
         why = []
+        for n, cs in standing.items():
+            why.append(f"NACK from {n} not withdrawn ({'; '.join(c['harm'] for c in cs)[:200]})")
         if answered:
-            why.append(f"objection that needs a change was answered, no reply from the objector ({names(answered)})")
+            nk = set(nacks or [])
+            why.append("objection that needs a change was answered, no reply from the objector ("
+                       + "; ".join(f"{c['author']}{' (NACK)' if c['author'] in nk else ''}: {c['harm'][:120]}" for c in answered) + ")")
         if mild:
             why.append(f"objection that needs an answer {'has none yet' if all(c['status'] == 'open' for c in mild) else 'is contested'} ({names(mild)})")
-        return "Mild", "; ".join(why)
+        return "Mild", "; ".join(why) + tail
     sup = record["support"]
     caveats = [c for c in obj if c["status"] == "agreed_to_disagree"]
     if sup:
         if caveats:
-            return "Positive w/ caveats", f"support with an agreed-to-disagree objection ({names(caveats)})"
+            return "Positive w/ caveats", f"support with an agreed-to-disagree objection ({names(caveats)})" + tail
         if any(x.get("substantive") for x in sup):
-            return "Strong", f"substantive support, no open objection ({', '.join(x['author'] for x in sup if x.get('substantive'))})"
-        return "Positive", f"support without stated reasons, no open objection ({', '.join(x['author'] for x in sup)})"
+            return "Strong", f"substantive support, no open objection ({', '.join(x['author'] for x in sup if x.get('substantive'))})" + tail
+        return "Positive", f"support without stated reasons, no open objection ({', '.join(x['author'] for x in sup)})" + tail
     if obj:
-        return "Neutral", "objections settled, nobody has spoken for the PR"
-    return "Crickets", "no substantive comment either way"
+        return "Neutral", "objections settled, nobody has spoken for the PR" + tail
+    return "Crickets", "no substantive comment either way" + tail
 
 
 def _stance_rank(st: str) -> int:

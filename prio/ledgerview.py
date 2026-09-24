@@ -58,8 +58,14 @@ def derive_reviewability(rec: dict, record: dict, cfg: Config) -> dict:
     return {"state": "Ready", "label": "Ready", "reason": "Nothing known that would invalidate a review now."}
 
 
-def _agreement(record: dict) -> dict:
-    state, why = ledger.derive_agreement(record)
+def current_nacks(rec: dict) -> list[str]:
+    """Reviewers whose latest verdict in DrahtBot's review table is a NACK."""
+    db = rec.get("bot", {}).get("drahtbot", {}).get("reviews", {})
+    return [w["login"] for key in ("nack", "approach_nack", "concept_nack") for w in db.get(key, [])]
+
+
+def _agreement(record: dict, nacks: list[str] | None = None) -> dict:
+    state, why = ledger.derive_agreement(record, nacks)
     lines = []
     for c in record["claims"]:
         if ledger.is_cleared(c):
@@ -135,7 +141,7 @@ def build_view(cfg: Config, data_dir: Path, recs: dict[int, dict]) -> dict[int, 
             "risk": code.get("risk"),
             "discussion": _discussion(record),
             "reviewability": derive_reviewability(rec, record, cfg),
-            "agreement": _agreement(record),
+            "agreement": _agreement(record, current_nacks(rec)),
             "dependencies": code.get("dependencies") or {"depends_on": [], "enables": []},
             "categories": categories,
             "confidence": code.get("confidence") or "medium", "uncertainties": code.get("uncertainties") or [], "needs": code.get("needs") or [],
