@@ -22,12 +22,21 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = 1
+SCHEMA = 2
 CLAIM_KINDS = ["safety", "correctness", "approach", "scope", "interface", "maintenance", "usefulness", "style"]
-CLAIM_STATUS = ["open", "resolved", "agreed_to_disagree"]
+# A claim is an item a reviewer raised that needs a response before merging:
+# an objection names one harm, a suggestion asks for something, a question
+# asks for information. clears_with says what deals with it: a direct reply
+# (blocked until answered) or a change to the PR (blocked until changed).
+CLAIM_TYPES = ["objection", "suggestion", "question"]
+CLEARS_WITH = ["answer", "change"]
+CLAIM_STATUS = ["open", "answered", "fixed", "accepted", "contested", "agreed_to_disagree"]
+# Statuses in which an item no longer waits on anyone.
+CLEARED = {"answer": {"answered", "fixed", "accepted", "agreed_to_disagree"},
+           "change": {"fixed", "accepted", "agreed_to_disagree"}}
+TEXT_FIELD = {"objection": "harm", "suggestion": "request", "question": "question"}
 STANCES = ["objection", "support", "question", "neutral"]
 REVIEW_EVIDENCE = ["none", "read", "tested", "both"]
-AFTER_REPLY = ["no_reply", "likely_settled", "unclear", "still_standing"]
 WAITING_ON = ["author", "reviewer", "decision", "nothing"]
 HISTORY_LIMIT = 50
 LOG_LIMIT = 50
@@ -62,13 +71,85 @@ def new_record(rec: dict) -> dict:
 
 
 def load(path: Path) -> dict | None:
+    """Read a record, upgrading an older schema in memory (``upgrade``)."""
     if not path.exists():
         return None
     with open(path) as f:
         r = json.load(f)
+    if r.get("schema") == 1:
+        upgrade_v1(r)
     if r.get("schema") != SCHEMA:
         raise ValueError(f"{path}: schema {r.get('schema')}, expected {SCHEMA}")
     return r
+
+
+def item_key(c: dict) -> str:
+    """A claim's identity: its anchor statement id, plus #part when one
+    statement raised several items (``c:123``, ``c:123#2``)."""
+    part = c.get("part") or 1
+    return c["id"] if part == 1 else f"{c['id']}#{part}"
+
+
+def item_text(c: dict) -> str:
+    """The harm, request, or question, whichever the claim's type carries."""
+    return c.get(TEXT_FIELD.get(c.get("type") or "objection", "harm")) or ""
+
+
+def is_cleared(c: dict) -> bool:
+    return c.get("status") in CLEARED.get(c.get("clears_with") or "answer", ())
+
+
+def upgrade_v1(r: dict) -> None:
+    """Schema 1 -> 2, in place and without a model call. Every v1 claim is
+    an objection; ``blocking`` becomes clears_with change/answer; the v1
+    status plus ``after_reply`` become one status:
+
+    - resolved with a pushed fix -> fixed
+    - resolved, settled by the objector -> accepted
+    - resolved, settled by someone else -> answered (a rebuttal the
+      objector did not respond to)
+    - open, likely_settled or unclear after a reply -> answered
+    - open, still_standing -> contested
+    - open with a reply on record but no after_reply (records older than
+      that field) -> answered; with no reply -> open
+    - agreed_to_disagree -> unchanged
+
+    Splitting objections that name several harms, and telling suggestions
+    and questions apart from objections, needs a thread read; later reads
+    do that as PRs get new statements."""
+    def status(c: dict, v1: str) -> str:
+        replied = bool(c.get("author_replies") or c.get("other_replies"))
+        sb = c.get("settled_by") or {}
+        if v1 == "resolved":
+            if c.get("fix"):
+                return "fixed"
+            if sb.get("by") and sb.get("by") == c.get("author"):
+                return "accepted"
+            return "answered"
+        if v1 == "open":
+            a = c.get("after_reply")
+            if a in ("likely_settled", "unclear"):
+                return "answered"
+            if a == "still_standing":
+                return "contested"
+            return "answered" if replied and not a else "open"
+        return v1
+    for c in r.get("claims") or []:
+        v1 = c.get("status") or "open"
+        c["type"] = "objection"
+        c["part"] = 1
+        c["request"], c["question"] = "", ""
+        c["clears_with"] = "change" if c.pop("blocking", False) else "answer"
+        c["status"] = status(c, v1)
+        note = c.pop("after_reply_note", "") or ""
+        a = c.pop("after_reply", None)
+        if not note and c["status"] == "answered" and v1 == "open" and not a:
+            note = "reply on record; standing not assessed yet"
+        c["status_note"] = note
+        c["status_by"] = c.pop("settled_by", None)
+        if c.get("pin"):
+            c["pin"]["status"] = c["status"] if c["pin"].get("status") == v1 else status(c, c["pin"].get("status") or "open")
+    r["schema"] = 2
 
 
 def save(path: Path, record: dict) -> None:
@@ -181,17 +262,22 @@ def validate(record: dict) -> list[str]:
         return errs
     seen = set(record["processed"]["events"])
     for c in record["claims"]:
-        for k in ("id", "author", "kind", "harm", "status", "blocking"):
+        for k in ("id", "author", "type", "kind", "status", "clears_with"):
             if k not in c:
                 errs.append(f"claim {c.get('id')}: missing {k}")
         if c.get("id") not in seen:
             errs.append(f"claim {c.get('id')}: anchor not a processed event")
+        if c.get("type") not in CLAIM_TYPES:
+            errs.append(f"claim {c.get('id')}: type {c.get('type')}")
         if c.get("kind") not in CLAIM_KINDS:
             errs.append(f"claim {c.get('id')}: kind {c.get('kind')}")
+        if c.get("clears_with") not in CLEARS_WITH:
+            errs.append(f"claim {c.get('id')}: clears_with {c.get('clears_with')}")
         if c.get("status") not in CLAIM_STATUS:
             errs.append(f"claim {c.get('id')}: status {c.get('status')}")
-        if c.get("status") != "open" and not c.get("settled_by") and not c.get("pin"):
-            errs.append(f"claim {c.get('id')}: {c.get('status')} without settled_by")
+        # contested is exempt: schema-1 records said an objection still stood without naming the pushback.
+        if c.get("status") in ("accepted", "agreed_to_disagree") and not c.get("status_by") and not c.get("pin"):
+            errs.append(f"claim {c.get('id')}: {c.get('status')} without status_by")
     for x in record["support"]:
         if x.get("id") not in seen:
             errs.append(f"support {x.get('id')}: anchor not a processed event")
@@ -213,22 +299,25 @@ THREAD_SCHEMA = {
                            "note": {"type": "string", "description": "a few words on what they said"}}}},
         "claims": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["id", "kind", "harm", "quote", "blocking", "status", "author_replies", "other_replies", "fix_pushed", "settled_by_id", "settled_by_quote", "after_reply", "after_reply_note"],
+            "required": ["id", "part", "type", "kind", "text", "quote", "clears_with", "status", "status_note", "author_replies", "other_replies",
+                         "fix_pushed", "status_by_id", "status_by_quote"],
             "properties": {
                 "id": {"type": "string", "description": "id of the statement that raised it, exactly as shown (c:, r:, rc:)"},
+                "part": {"type": "integer", "description": "1, or 2, 3, ... for further items raised by the same statement; keep the part a listed claim already has"},
+                "type": {"type": "string", "enum": CLAIM_TYPES,
+                         "description": "objection = names a concrete cost of merging as-is; suggestion = asks for a change or questions the value of the change without naming a cost; question = asks for information"},
                 "kind": {"type": "string", "enum": CLAIM_KINDS},
-                "harm": {"type": "string", "description": "the concrete cost of merging the reviewer names; empty only for style"},
+                "text": {"type": "string", "description": "objection: the one concrete harm; suggestion: what the reviewer asks for, in their terms; question: the question"},
                 "quote": {"type": "string", "description": "a short quote from the statement"},
-                "blocking": {"type": "boolean", "description": "the reviewer treats it as a reason not to merge as-is"},
+                "clears_with": {"type": "string", "enum": CLEARS_WITH,
+                                "description": "answer = blocked until answered: a direct reply deals with it (the default; always for questions); change = blocked until changed: only a push implementing it, or the reviewer dropping it, deals with it"},
                 "status": {"type": "string", "enum": CLAIM_STATUS},
-                "author_replies": {"type": "array", "items": {"type": "string"}, "description": "ids of the PR author's statements answering this claim"},
-                "other_replies": {"type": "array", "items": {"type": "string"}, "description": "ids of statements by anyone else (another reviewer, not the objector) answering this claim: explaining why it does not apply, or proposing what to do about it"},
+                "status_note": {"type": "string", "description": "a few words on why it has this status; empty when open with no reply"},
+                "author_replies": {"type": "array", "items": {"type": "string"}, "description": "ids of the PR author's statements answering this item"},
+                "other_replies": {"type": "array", "items": {"type": "string"}, "description": "ids of statements by anyone else (not the reviewer who raised it) answering this item"},
                 "fix_pushed": {"type": "boolean", "description": "a later push actually implements the change"},
-                "settled_by_id": {"type": "string", "description": "id of the statement that settled it; empty when open"},
-                "settled_by_quote": {"type": "string", "description": "short quote from that statement; empty when open"},
-                "after_reply": {"type": "string", "enum": AFTER_REPLY,
-                                "description": "for an open claim that the author or another reviewer has answered: where it stands now. likely_settled = the reply or a push addressed the point and the objector has not pushed back (but nothing settles it on the record); unclear = the reply is partial or the objector has not reacted; still_standing = the objector pushed back after the reply or the reply does not address the harm. no_reply when nobody has answered."},
-                "after_reply_note": {"type": "string", "description": "a few words on why; empty for no_reply"},
+                "status_by_id": {"type": "string", "description": "id of the statement that gave it its status (the reply, the fix announcement, the reviewer's acceptance or pushback); empty when open"},
+                "status_by_quote": {"type": "string", "description": "short quote from that statement; empty when open"},
             }}},
         "support": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["id", "verdict", "reason", "substantive", "evidence", "areas"],
@@ -302,13 +391,13 @@ def compact_view(record: dict) -> str:
     lines.append("claims:")
     for c in record["claims"]:
         pin = f" PINNED {c['pin']['status']} by {c['pin']['by']} on {c['pin']['at'][:10]}" if c.get("pin") else ""
-        settled = f"; settled by {c['settled_by']['id']}: \"{c['settled_by'].get('quote', '')[:120]}\"" if c.get("settled_by") else ""
+        by = f"; {c['status']} by {c['status_by']['id']}: \"{c['status_by'].get('quote', '')[:120]}\"" if c.get("status_by") else ""
+        note = f" ({c['status_note']})" if c.get("status_note") else ""
         replies = (f"; author replied in {', '.join(c.get('author_replies') or [])}" if c.get("author_replies") else "; no author reply") \
-            + (f"; others replied in {', '.join(c.get('other_replies') or [])}" if c.get("other_replies") else "") \
-            + (f" ({c['after_reply']}: {c.get('after_reply_note') or ''})" if c.get("after_reply") and c["after_reply"] != "no_reply" else "")
-        lines.append(f"  {c['id']} | {c['author']} ({(c.get('association') or 'none').lower()}) | {c.get('at')} | {c['kind']} | {c['status']}"
-                     f"{' | blocking' if c.get('blocking') else ' | nonblocking'}{replies}{settled}{pin}\n"
-                     f"    harm: {c.get('harm') or ''}\n    quote: \"{(c.get('quote') or '')[:200]}\"")
+            + (f"; others replied in {', '.join(c.get('other_replies') or [])}" if c.get("other_replies") else "")
+        lines.append(f"  {item_key(c)} | {c['author']} ({(c.get('association') or 'none').lower()}) | {c.get('at')} | {c.get('type', 'objection')} | {c['kind']}"
+                     f" | clears with {c.get('clears_with', 'answer')} | {c['status']}{note}{replies}{by}{pin}\n"
+                     f"    {TEXT_FIELD.get(c.get('type') or 'objection', 'harm')}: {item_text(c)}\n    quote: \"{(c.get('quote') or '')[:200]}\"")
     lines.append("support:")
     for s in record["support"]:
         lines.append(f"  {s['id']} | {s['author']} ({(s.get('association') or 'none').lower()}) | {s.get('at')} | {s.get('verdict') or 'no verdict word'}"
@@ -364,10 +453,14 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
     author = rec["author"]
     people = commenters(rec)
     changes, rejected, checks = [], [], []
-    old = {c["id"]: c for c in record["claims"]}
+    old = {item_key(c): c for c in record["claims"]}
     new_claims: dict[str, dict] = {}
     for c in resp.get("claims") or []:
-        i = c.get("id")
+        i, part = c.get("id") or "", c.get("part") or 1
+        if "#" in i:  # the model echoed a key from the record view
+            i, _, p = i.partition("#")
+            part = int(p) if p.isdigit() else part
+        part = part if isinstance(part, int) and part >= 1 else 1
         e = by_id.get(i)
         if not e:
             rejected.append(f"claim {i}: not a statement in this PR")
@@ -375,74 +468,91 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
         if e.get("who") == author:
             rejected.append(f"claim {i}: anchored to the author's own statement")
             continue
+        ctype = c.get("type") if c.get("type") in CLAIM_TYPES else "objection"
         claim = {
-            "id": i, "hash": e.get("hash"), "url": e.get("url"), "author": e.get("who"), "association": e.get("assoc") or "NONE",
-            "at": _date_of(by_id, i), "kind": c.get("kind"), "harm": c.get("harm") or "", "quote": (c.get("quote") or "")[:400],
-            "blocking": bool(c.get("blocking")), "status": c.get("status") or "open",
-            "author_replies": [], "other_replies": [], "fix": None, "settled_by": None, "pin": None, "history": [],
-            "after_reply": c.get("after_reply") if c.get("after_reply") in AFTER_REPLY else "no_reply",
-            "after_reply_note": (c.get("after_reply_note") or "")[:200],
+            "id": i, "part": part, "hash": e.get("hash"), "url": e.get("url"), "author": e.get("who"), "association": e.get("assoc") or "NONE",
+            "at": _date_of(by_id, i), "type": ctype, "kind": c.get("kind"), "harm": "", "request": "", "question": "",
+            "quote": (c.get("quote") or "")[:400],
+            "clears_with": c.get("clears_with") if c.get("clears_with") in CLEARS_WITH else "answer",
+            "status": c.get("status") if c.get("status") in CLAIM_STATUS else "open", "status_note": (c.get("status_note") or "")[:200],
+            "author_replies": [], "other_replies": [], "fix": None, "status_by": None, "pin": None, "history": [],
         }
+        claim[TEXT_FIELD[ctype]] = c.get("text") or ""
+        key = item_key(claim)
+        if key in new_claims:
+            rejected.append(f"claim {key}: listed twice; first kept")
+            continue
+        if ctype == "question" and claim["clears_with"] != "answer":
+            checks.append(f"claim {key}: a question clears with an answer")
+            claim["clears_with"] = "answer"
         for r in c.get("author_replies") or []:
             re_ = by_id.get(r)
             if re_ and re_.get("who") == author and _date_of(by_id, r) >= claim["at"]:
                 claim["author_replies"].append(r)
             else:
-                checks.append(f"claim {i}: reply {r} is not an author statement after the claim; dropped")
+                checks.append(f"claim {key}: reply {r} is not an author statement after the claim; dropped")
         for r in c.get("other_replies") or []:
             re_ = by_id.get(r)
             if re_ and re_.get("who") not in (author, e.get("who")) and _date_of(by_id, r) >= claim["at"]:
                 claim["other_replies"].append(r)
             else:
-                checks.append(f"claim {i}: other reply {r} is not a third party's statement after the claim; dropped")
+                checks.append(f"claim {key}: other reply {r} is not a third party's statement after the claim; dropped")
         if c.get("fix_pushed"):
             claim["fix"] = {"sha": rec.get("head_sha"), "at": None}
-        answered = bool(claim["author_replies"] or claim["other_replies"])
-        if not answered and claim["after_reply"] != "no_reply":
-            checks.append(f"claim {i}: after_reply {claim['after_reply']} without any reply; set to no_reply")
-            claim["after_reply"], claim["after_reply_note"] = "no_reply", ""
-        elif answered and claim["after_reply"] == "no_reply":
-            claim["after_reply"] = "unclear"
-        if claim["status"] != "open":
-            sid = c.get("settled_by_id") or ""
-            se = by_id.get(sid)
-            if not se:
-                checks.append(f"claim {i}: {claim['status']} without a settling statement; treated as open")
-                claim["status"] = "open"
-            elif _date_of(by_id, sid) < claim["at"]:
-                checks.append(f"claim {i}: settling statement {sid} predates the claim; treated as open")
-                claim["status"] = "open"
-            else:
-                claim["settled_by"] = {"id": sid, "quote": (c.get("settled_by_quote") or "")[:300], "at": _date_of(by_id, sid), "by": se.get("who")}
-        prev = old.get(i)
+        replied = bool(claim["author_replies"] or claim["other_replies"])
+        sid = c.get("status_by_id") or ""
+        se = by_id.get(sid)
+        if se and _date_of(by_id, sid) >= claim["at"]:
+            claim["status_by"] = {"id": sid, "quote": (c.get("status_by_quote") or "")[:300], "at": _date_of(by_id, sid), "by": se.get("who")}
+        elif sid:
+            checks.append(f"claim {key}: status statement {sid} is not a statement after the claim; dropped")
+        # Hold each status to what the record can show; fall back to the
+        # status the replies on record support.
+        fallback = "answered" if replied else "open"
+        st = claim["status"]
+        if st == "answered" and not replied:
+            checks.append(f"claim {key}: answered without a reply on record; treated as open")
+            claim["status"] = "open"
+        elif st == "fixed" and not claim["fix"] and not claim["status_by"]:
+            checks.append(f"claim {key}: fixed without a pushed fix or a statement; treated as {fallback}")
+            claim["status"] = fallback
+        elif st in ("accepted", "contested") and (claim["status_by"] or {}).get("by") != claim["author"]:
+            checks.append(f"claim {key}: {st} needs a statement by {claim['author']}; treated as {fallback}")
+            claim["status"] = fallback
+        elif st == "agreed_to_disagree" and not claim["status_by"]:
+            checks.append(f"claim {key}: agreed_to_disagree without a statement; treated as {fallback}")
+            claim["status"] = fallback
+        if claim["status"] == "open":
+            claim["status_by"] = None
+        prev = old.get(key)
         if prev:
             claim["history"] = prev.get("history") or []
             claim["pin"] = prev.get("pin")
             if prev.get("pin") and claim["status"] != prev["status"]:
-                sb = claim.get("settled_by")
+                sb = claim.get("status_by")
                 if sb and sb["at"] > prev["pin"]["at"][:10]:
-                    changes.append(f"claim {i}: pinned {prev['status']} -> {claim['status']} on later evidence {sb['id']}")
+                    changes.append(f"claim {key}: pinned {prev['status']} -> {claim['status']} on later evidence {sb['id']}")
                 else:
-                    rejected.append(f"claim {i}: pinned {prev['status']} kept (model said {claim['status']})")
+                    rejected.append(f"claim {key}: pinned {prev['status']} kept (model said {claim['status']})")
                     claim["status"] = prev["status"]
-                    claim["settled_by"] = prev.get("settled_by")
-            if claim["status"] != prev["status"] or claim["blocking"] != prev.get("blocking"):
-                cause = (claim.get("settled_by") or {}).get("id") or (d["new"] + d["edited"] or [None])[-1]
-                claim["history"].append({"at": _now(), "status": claim["status"], "blocking": claim["blocking"], "cause": cause, "by": run})
+                    claim["status_by"] = prev.get("status_by")
+            if (claim["status"], claim["clears_with"], claim["type"]) != (prev["status"], prev.get("clears_with"), prev.get("type")):
+                cause = (claim.get("status_by") or {}).get("id") or (d["new"] + d["edited"] or [None])[-1]
+                claim["history"].append({"at": _now(), "status": claim["status"], "clears_with": claim["clears_with"], "type": claim["type"], "cause": cause, "by": run})
                 del claim["history"][:-HISTORY_LIMIT]
-                changes.append(f"claim {i}: {prev['status']}{'/blocking' if prev.get('blocking') else ''} -> {claim['status']}{'/blocking' if claim['blocking'] else ''}")
+                changes.append(f"claim {key}: {prev.get('type')}/{prev.get('clears_with')}/{prev['status']} -> {claim['type']}/{claim['clears_with']}/{claim['status']}")
         else:
-            claim["history"].append({"at": _now(), "status": claim["status"], "blocking": claim["blocking"], "cause": i, "by": run})
-            changes.append(f"claim {i} added ({claim['status']}{', blocking' if claim['blocking'] else ''}) by {claim['author']}")
-        new_claims[i] = claim
-    for i, prev in old.items():
-        if i in new_claims:
+            claim["history"].append({"at": _now(), "status": claim["status"], "clears_with": claim["clears_with"], "type": claim["type"], "cause": i, "by": run})
+            changes.append(f"claim {key} added ({claim['type']}, clears with {claim['clears_with']}, {claim['status']}) by {claim['author']}")
+        new_claims[key] = claim
+    for key, prev in old.items():
+        if key in new_claims:
             continue
-        if i not in by_id:
-            changes.append(f"claim {i} dropped: statement deleted")
+        if prev["id"] not in by_id:
+            changes.append(f"claim {key} dropped: statement deleted")
             continue
-        checks.append(f"claim {i}: omitted by the model; kept")
-        new_claims[i] = prev
+        checks.append(f"claim {key}: omitted by the model; kept")
+        new_claims[key] = prev
     record["claims"] = list(new_claims.values())
 
     support = []
@@ -506,14 +616,49 @@ def apply_thread_response(record: dict, rec: dict, d: dict, resp: dict, run: str
 # ----- derived state (computed, never stored as truth) -----
 
 def derive_agreement(record: dict) -> tuple[str, str]:
-    """Agreement state from the record's claims and support, by the same
-    rules as dossier.derive_agreement (definitions/agreement.md): the
-    hardest open claim sets the state; support decides the positive end."""
-    from .dossier import derive_agreement as _derive
-    objections = [{"reviewer": c["author"], "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
-                   "author_replied": bool(c.get("author_replies")), "status": c.get("status")} for c in record["claims"]]
-    support = [{"reviewer": s["author"], "substantive": bool(s.get("substantive"))} for s in record["support"]]
-    return _derive({"objections": objections, "support": support})
+    """Agreement state from the record (definitions/agreement.md). Only
+    objections naming a harm move it; suggestions and questions never do.
+
+    | objection       | open    | answered | contested | fixed/accepted | agreed_to_disagree  |
+    | clears w/change | Blocked | Mild     | Disputed  | resolved       | Positive w/ caveats |
+    | clears w/answer | Mild    | resolved | Mild      | resolved       | Positive w/ caveats |
+
+    The hardest objection sets the state; support decides the positive end
+    once nothing holds it lower."""
+    obj = [c for c in record["claims"] if (c.get("type") or "objection") == "objection" and (c.get("harm") or "").strip()]
+    def names(items) -> str:
+        seen = []
+        for c in items:
+            if c["author"] not in seen:
+                seen.append(c["author"])
+        return ", ".join(seen)
+    change = [c for c in obj if c.get("clears_with") == "change"]
+    blocked = [c for c in change if c["status"] == "open"]
+    if blocked:
+        return "Blocked", f"objection that needs a change, nobody has replied ({names(blocked)})"
+    disputed = [c for c in change if c["status"] == "contested"]
+    if disputed:
+        return "Disputed", f"objection that needs a change, the objector pushed back after a reply ({names(disputed)})"
+    answered = [c for c in change if c["status"] == "answered"]
+    mild = [c for c in obj if c.get("clears_with") != "change" and c["status"] in ("open", "contested")]
+    if answered or mild:
+        why = []
+        if answered:
+            why.append(f"objection that needs a change was answered, no reply from the objector ({names(answered)})")
+        if mild:
+            why.append(f"objection that needs an answer {'has none yet' if all(c['status'] == 'open' for c in mild) else 'is contested'} ({names(mild)})")
+        return "Mild", "; ".join(why)
+    sup = record["support"]
+    caveats = [c for c in obj if c["status"] == "agreed_to_disagree"]
+    if sup:
+        if caveats:
+            return "Positive w/ caveats", f"support with an agreed-to-disagree objection ({names(caveats)})"
+        if any(x.get("substantive") for x in sup):
+            return "Strong", f"substantive support, no open objection ({', '.join(x['author'] for x in sup if x.get('substantive'))})"
+        return "Positive", f"support without stated reasons, no open objection ({', '.join(x['author'] for x in sup)})"
+    if obj:
+        return "Neutral", "objections settled, nobody has spoken for the PR"
+    return "Crickets", "no substantive comment either way"
 
 
 def _stance_rank(st: str) -> int:
@@ -522,29 +667,32 @@ def _stance_rank(st: str) -> int:
 
 def merge_responses(a: dict, b: dict) -> dict:
     """Union of two thread-read responses to the same request: a claim
-    either read found; open wins over settled and blocking over not when
-    both saw it; author replies only where both agree; support and
+    either read found; the less settled status and clears_with change win
+    when both saw it; author replies only where both agree; support and
     participants unioned, the stronger stance kept. The result goes
     through apply_thread_response like a single response."""
     claims: dict[str, dict] = {}
+    # When the reads disagree, keep the status that holds the PR back more.
+    weight = {"contested": 5, "open": 4, "answered": 3, "agreed_to_disagree": 2, "fixed": 1, "accepted": 0}
     for read in (a, b):
         for c in read.get("claims") or []:
-            i = c.get("id")
+            i = f"{c.get('id')}#{c.get('part') or 1}"
             if i not in claims:
                 claims[i] = dict(c)
                 continue
             m = claims[i]
-            if c.get("status") == "open" and m.get("status") != "open":
-                m.update(status="open", settled_by_id="", settled_by_quote="")
-            m["blocking"] = bool(m.get("blocking") or c.get("blocking"))
+            if weight.get(c.get("status"), 4) > weight.get(m.get("status"), 4):
+                m.update(status=c.get("status"), status_note=c.get("status_note") or "",
+                         status_by_id=c.get("status_by_id") or "", status_by_quote=c.get("status_by_quote") or "")
+            if c.get("clears_with") == "change":
+                m["clears_with"] = "change"
+            if m.get("type") != c.get("type") and "objection" in (m.get("type"), c.get("type")):
+                m["type"] = "objection"  # listing a concern as an objection is the safer error
             m["author_replies"] = sorted(set(m.get("author_replies") or []) & set(c.get("author_replies") or []))
             m["other_replies"] = sorted(set(m.get("other_replies") or []) & set(c.get("other_replies") or []))
             m["fix_pushed"] = bool(m.get("fix_pushed") and c.get("fix_pushed"))
-            if not m.get("harm") and c.get("harm"):
-                m["harm"] = c["harm"]
-            harsh = {"no_reply": 0, "likely_settled": 1, "unclear": 2, "still_standing": 3}
-            if harsh.get(c.get("after_reply"), 0) > harsh.get(m.get("after_reply"), 0):
-                m["after_reply"], m["after_reply_note"] = c.get("after_reply"), c.get("after_reply_note") or ""
+            if not m.get("text") and c.get("text"):
+                m["text"] = c["text"]
     support: dict[str, dict] = {}
     for read in (a, b):
         for x in read.get("support") or []:

@@ -149,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     lu.add_argument("--as-of", help="drift test: treat the extract as of this date (YYYY-MM-DD), dropping later statements")
     lu.add_argument("--run-kind", default="", help="suffix for the run id (e.g. replay)")
     lu.add_argument("--reads", type=int, default=1, choices=[1, 2], help="2 = two reads merged by union for seed reads (fresh records)")
+    lm = lgsub.add_parser("migrate", help="rewrite records to the current schema; judgments made from an unchanged record keep matching it")
+    lm.add_argument("--data", required=True, type=Path)
+    lm.add_argument("--dry-run", action="store_true")
     la = lgsub.add_parser("assess", help="code assessment (per patch-id) and category judgments for PRs whose files are missing or stale")
     la.add_argument("--extract", required=True, type=Path)
     la.add_argument("--data", required=True, type=Path)
@@ -246,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
 
         res = stages.cmd_assess(cfg, args.extract, args.data, parse_only(args.only), args.model, args.effort, args.git, args.patch_chars,
                                 args.dry_run, force=args.force, what=args.what, prior_dir=args.prior)
+    elif args.cmd == "ledger" and args.lcmd == "migrate":
+        from . import ledgerrun
+
+        res = ledgerrun.cmd_migrate(args.data, args.dry_run)
     elif args.cmd == "ledger" and args.lcmd == "show":
         from . import ledgerrun
 

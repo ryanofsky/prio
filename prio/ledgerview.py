@@ -60,17 +60,31 @@ def derive_reviewability(rec: dict, record: dict, cfg: Config) -> dict:
 
 def _agreement(record: dict) -> dict:
     state, why = ledger.derive_agreement(record)
-    open_claims = [c for c in record["claims"] if c.get("status") == "open"]
     lines = []
-    for c in open_claims:
-        lines.append(f"{c['author']} ({c['kind']}, {'blocking' if c.get('blocking') else 'nonblocking'}{', no author reply' if not c.get('author_replies') else ''}): {c.get('harm') or ''}")
+    for c in record["claims"]:
+        if ledger.is_cleared(c):
+            continue
+        need = "must be changed" if c.get("clears_with") == "change" else "must be answered"
+        lines.append(f"{c['author']} ({c.get('type', 'objection')}, {c['kind']}, {need}, {c['status']}): {ledger.item_text(c)}")
     for s in record["support"]:
         lines.append(f"{s['author']}: {s.get('verdict') or 'support'}{' — ' + s['reason'] if s.get('reason') else ''}")
-    objections = [{"reviewer": c["author"], "association": c.get("association"), "kind": c.get("kind"), "after_reply": c.get("after_reply"), "after_reply_note": c.get("after_reply_note") or "", "harm": c.get("harm") or "", "blocking": bool(c.get("blocking")),
-                   "author_replied": bool(c.get("author_replies")), "others_replied": bool(c.get("other_replies")), "fix_pushed": bool(c.get("fix")), "status": c.get("status"),
-                   "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": c["id"],
-                   "resolution_evidence": (f"{c['settled_by'].get('at')}: {c['settled_by'].get('by')}: '{c['settled_by'].get('quote', '')}'" if c.get("settled_by") else ""),
-                   "pin": c.get("pin")} for c in record["claims"]]
+    # "objections" holds every item (objections, suggestions, questions);
+    # "type" tells them apart. "blocking" mirrors clears_with for readers
+    # of the older dossier shape.
+    objections = []
+    for c in record["claims"]:
+        sb = c.get("status_by")
+        objections.append({
+            "reviewer": c["author"], "association": c.get("association"), "type": c.get("type") or "objection", "kind": c.get("kind"),
+            "harm": c.get("harm") or "", "request": c.get("request") or "", "question": c.get("question") or "", "text": ledger.item_text(c),
+            "clears_with": c.get("clears_with"), "blocking": c.get("clears_with") == "change", "status": c.get("status"),
+            "status_note": c.get("status_note") or "", "cleared": ledger.is_cleared(c),
+            "author_replied": bool(c.get("author_replies")), "others_replied": bool(c.get("other_replies")), "fix_pushed": bool(c.get("fix")),
+            "replies": (c.get("author_replies") or []) + (c.get("other_replies") or []),
+            "evidence": f"{c.get('at')}: '{c.get('quote') or ''}'", "url": c.get("url"), "id": ledger.item_key(c), "at": c.get("at"),
+            "status_at": (sb or {}).get("at"), "status_by": (sb or {}).get("by"),
+            "resolution_evidence": (f"{sb.get('at')}: {sb.get('by')}: '{sb.get('quote', '')}'" if sb else ""),
+            "pin": c.get("pin")})
     support = [{"reviewer": s["author"], "reason": s.get("reason") or "", "substantive": bool(s.get("substantive")), "verdict": s.get("verdict") or "", "id": s["id"], "url": s.get("url"),
                 "at": s.get("at"), "association": s.get("association"), "evidence": s.get("evidence"), "areas": s.get("areas") or []}
                for s in record["support"]]
@@ -83,9 +97,10 @@ def _agreement(record: dict) -> dict:
 
 
 def _discussion(record: dict) -> dict:
-    open_c = [f"{c['author']}: {c.get('harm') or c.get('quote') or ''}" for c in record["claims"] if c.get("status") == "open"]
-    resolved = [f"{c['author']}: {c.get('harm') or c.get('quote') or ''} (settled by {c['settled_by'].get('by')} {c['settled_by'].get('at')})" if c.get("settled_by") else f"{c['author']}: {c.get('harm') or ''}"
-                for c in record["claims"] if c.get("status") != "open"]
+    open_c = [f"{c['author']}: {ledger.item_text(c) or c.get('quote') or ''}" for c in record["claims"] if not ledger.is_cleared(c)]
+    resolved = [f"{c['author']}: {ledger.item_text(c)} ({c['status']} by {c['status_by'].get('by')} {c['status_by'].get('at')})" if c.get("status_by")
+                else f"{c['author']}: {ledger.item_text(c)} ({c['status']})"
+                for c in record["claims"] if ledger.is_cleared(c)]
     last = record["processed"].get("last_event_at") or ""
     return {"author_status": f"last statement processed {last[:10]}" if last else "no discussion", "open_concerns": open_c, "resolved_concerns": resolved}
 

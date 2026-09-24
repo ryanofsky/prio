@@ -166,6 +166,43 @@ def cmd_update(cfg: Config, extract_dir: Path, data_dir: Path, only: set[int] | 
     return {"run": run, "reads": len(todo), "cost_usd": round(manifest["cost_usd"], 4), "errors": len(manifest["errors"])}
 
 
+def cmd_migrate(data_dir: Path, dry_run: bool = False) -> dict:
+    """Rewrite every record at an older schema (``ledger.upgrade_v1``).
+    The rewrite changes how claims are stored, not what they say, so a
+    category judgment whose ``from.claims_digest`` matches the record
+    before the rewrite is updated to match it after, rather than being
+    judged again. Idempotent; runs before each ledger update."""
+    import glob
+    from . import stages
+    records = judgments = 0
+    statuses: dict[str, int] = {}
+    for p in sorted(glob.glob(str(data_dir / "*" / "*" / "prs" / "*.json")) + glob.glob(str(data_dir / "*" / "*" / "prs" / "closed" / "*.json"))):
+        with open(p) as f:
+            raw = json.load(f)
+        if raw.get("schema") != 1:
+            continue
+        old = stages.claims_digest_v1(raw)
+        ledger.upgrade_v1(raw)
+        new = stages.claims_digest(raw)
+        for c in raw["claims"]:
+            k = f"{c['clears_with']}/{c['status']}"
+            statuses[k] = statuses.get(k, 0) + 1
+        records += 1
+        repo_dir = Path(p).parent.parent if Path(p).parent.name == "prs" else Path(p).parent.parent.parent
+        for jp in glob.glob(str(repo_dir / "*categories" / "*" / f"{raw['number']}.json")):
+            with open(jp) as f:
+                j = json.load(f)
+            if (j.get("from") or {}).get("claims_digest") == old and old != new:
+                j["from"]["claims_digest"] = new
+                judgments += 1
+                if not dry_run:
+                    stages._save(Path(jp), j)
+        if not dry_run:
+            ledger.save(Path(p), raw)
+    print(f"{records} records migrated, {judgments} judgments carried over" + (" (dry run)" if dry_run else ""), file=sys.stderr)
+    return {"records": records, "judgments": judgments, "claims": dict(sorted(statuses.items())), "dry_run": dry_run}
+
+
 def cmd_show(data_dir: Path, repo: str, n: int) -> str:
     record = ledger.load(ledger.record_path(data_dir, repo, n))
     if not record:

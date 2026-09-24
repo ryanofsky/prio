@@ -261,21 +261,22 @@ def _objections(ag: dict) -> str:
                 replied = 'no <span class="muted">(model said yes)</span>'
             if o.get("fix_pushed"):
                 status += ' <span class="muted">· fix pushed</span>'
-            if o.get("after_reply") and o["after_reply"] != "no_reply":
-                status += f' <span class="muted">· after reply: {_e(o["after_reply"].replace("_", " "))}' + (f' ({_e(o["after_reply_note"])})' if o.get("after_reply_note") else "") + '</span>'
+            if o.get("status_note"):
+                status += f' <span class="muted">· {_e(o["status_note"])}</span>'
             if o.get("pin"):
                 status += f' <span class="muted">· pinned by {_e(o["pin"].get("by"))}</span>'
             who = _e(o.get("reviewer")) + (f' <span class="muted">({_e(o["association"].lower())})</span>' if o.get("association") else "")
             quote = _t(o.get("evidence") or "")
             if o.get("url"):
                 quote = f'<a href="{_e(o["url"])}">{_e((o.get("evidence") or "")[:10])}</a>' + _t((o.get("evidence") or "")[10:])
-            rows.append(f'<tr><td>{who}</td><td>{_e(o.get("kind") or "")}</td><td>{_e(o.get("harm") or "")}</td>'
-                        f'<td>{status}</td><td>{"yes" if o.get("blocking") else "no"}</td><td>{replied}</td>'
-                        f'<td>{quote}' + (f'<br><span class="k">Settled:</span> {_t(o["resolution_evidence"])}' if o.get("resolution_evidence") else "") + '</td></tr>')
-        out.append('<p><span class="k">Objections:</span></p><div class="scroll"><table class="obj"><tr><th>Reviewer</th><th>Kind</th><th>Harm</th><th>Status</th><th>Blocking</th><th>Author replied</th><th>Quote</th></tr>'
+            must = o.get("clears_with") or ("change" if o.get("blocking") else "answer")
+            rows.append(f'<tr><td>{who}</td><td>{_e(o.get("type") or "objection")}, {_e(o.get("kind") or "")}</td><td>{_e(o.get("text") or o.get("harm") or "")}</td>'
+                        f'<td>{status}</td><td>{"changed" if must == "change" else "answered"}</td><td>{replied}</td>'
+                        f'<td>{quote}' + (f'<br><span class="k">Status from:</span> {_t(o["resolution_evidence"])}' if o.get("resolution_evidence") else "") + '</td></tr>')
+        out.append('<p><span class="k">Objections, suggestions, and questions:</span></p><div class="scroll"><table class="obj"><tr><th>Reviewer</th><th>Type</th><th>Harm, request, or question</th><th>Status</th><th>Must be</th><th>Author replied</th><th>Quote</th></tr>'
                    + "".join(rows) + '</table></div>')
     else:
-        out.append('<p><span class="k">Objections:</span> none enumerated.</p>')
+        out.append('<p><span class="k">Objections, suggestions, and questions:</span> none recorded.</p>')
     sup = ag.get("support") or []
     if sup:
         items = []

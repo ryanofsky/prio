@@ -82,6 +82,10 @@ if [ -z "${PRIO_SKIP_EXTRACT:-}" ]; then
   mark "extract done"
 fi
 
+# Bring records to the current schema first (a no-op once done), so the
+# judgments made from them keep matching and are not redone.
+prio ledger migrate --data "$L" >/dev/null
+
 if [ -z "${PRIO_SKIP_MODEL:-}" ]; then
   log "thread reads"
   prior=(); [ -d "$D/dossier" ] && prior=(--prior "$D/dossier")
