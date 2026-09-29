@@ -8,7 +8,7 @@ No batching, no prompt caching, no thinking controls; requests run with a
 small thread pool. OpenRouter reports the dollar cost of each request in
 ``usage.cost`` when asked, which is stored as cost_usd.
 
-The key is read from OPENROUTER_API_KEY or ~/.config/prio/openrouter-key.
+The key is read from OPENROUTER_API_KEY or ~/.config/prio/openrouter-workstation-key.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def is_openrouter(model: str) -> bool:
 def _key() -> str:
     k = os.environ.get("OPENROUTER_API_KEY")
     if not k:
-        p = Path.home() / ".config" / "prio" / "openrouter-key"
+        p = Path.home() / ".config" / "prio" / "openrouter-workstation-key"
         if p.exists():
             k = p.read_text().strip()
     if not k:
-        raise RuntimeError("no OpenRouter key: set OPENROUTER_API_KEY or create ~/.config/prio/openrouter-key")
+        raise RuntimeError("no OpenRouter key: set OPENROUTER_API_KEY or create ~/.config/prio/openrouter-workstation-key")
     return k
 
 
