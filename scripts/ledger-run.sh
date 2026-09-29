@@ -56,6 +56,13 @@ mark() { mkdir -p "$D/status"; echo "$(date -u +%FT%TZ) $*" >> "$D/status/curren
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 trap 'mark "FAILED at line $LINENO"' ERR
 : > "$D/status/current.log" 2>/dev/null || mkdir -p "$D/status"; mark "ledger run started"
+# Per-PR model failures do not stop the run: the site is still rendered and
+# pushed, and the failed PRs are retried on the next run. They are collected
+# here so the run can still exit non-zero at the end (status 3), which is what
+# lets systemd's OnFailure= send an alert. A run that logged "18 errors" used
+# to exit 0 and go unnoticed.
+STAGES="$D/status/stages.log"; : > "$STAGES"
+stage_out() { grep -E "$1" | tee -a "$STAGES" || true; }
 only=(); [ -n "${PRIO_ONLY:-}" ] && only=(--only "$PRIO_ONLY")
 
 if [ ! -d "$L/.git" ]; then
@@ -92,13 +99,13 @@ if [ -z "${PRIO_SKIP_MODEL:-}" ]; then
   # Records read under an older schema are re-read whole within PRIO_REREAD_BUDGET dollars a
   # run: those in the top five of a category on the last render first (docs/schema-history.md).
   prio ledger update --extract "$D/extract" --data "$L" --model "$MODEL" --reads "${PRIO_READS:-2}" "${prior[@]}" "${only[@]}" \
-    --reread-budget "${PRIO_REREAD_BUDGET:-1.50}" --order "$OUT/data/order.json" 2>&1 | grep -E "PRs,|re-reads:|total|ERROR" || true
+    --reread-budget "${PRIO_REREAD_BUDGET:-1.50}" --order "$OUT/data/order.json" 2>&1 | stage_out "PRs,|re-reads:|total|ERROR"
   mark "thread reads done"
   log "code assessments and judgments"
-  prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | grep -E "PRs:|total|ERROR" || true
+  prio ledger assess --extract "$D/extract" --data "$L" --git "$D/git" --model "$MODEL" --patch-chars "${PRIO_PATCH_CHARS:-40000}" "${prior[@]}" "${only[@]}" 2>&1 | stage_out "PRs:|total|ERROR"
   mark "code assessments and judgments done"
   log "display lines"
-  prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | grep -E "dossiers|total|ERROR" || true
+  prio display submit --extract "$D/extract" --data "$L" --out "$L/display" --model "${PRIO_DISPLAY_MODEL:-$MODEL}" "${only[@]}" 2>&1 | stage_out "dossiers|total|ERROR"
 else
   log "skipping thread reads, code assessments, and display lines (PRIO_SKIP_MODEL); rendering the existing ledger data"
 fi
@@ -118,7 +125,15 @@ if git -C "$L" remote get-url origin >/dev/null 2>&1; then
   if ! push_out=$(git -C "$L" push --quiet origin HEAD 2>&1); then
     log "push to origin failed; the commit is local. git said:"
     printf '%s\n' "$push_out" | sed 's/^/    /'
+    echo "ERROR: push to origin failed" >> "$STAGES"
   fi
+fi
+nerr=$(grep -c ERROR "$STAGES" || true)
+if [ "$nerr" -gt 0 ]; then
+  mark "done: site published, with $nerr errors"
+  log "done, with $nerr errors (exit 3 so OnFailure= alerts; the next run retries the failed PRs):"
+  grep ERROR "$STAGES" | cut -c1-240 | head -40
+  exit 3
 fi
 mark "done: site published"
 log "done"

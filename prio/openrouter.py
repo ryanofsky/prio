@@ -102,8 +102,20 @@ def chat(model: str, system: list[dict] | str, user: str, schema: dict | None, m
                 continue
             raise RuntimeError(last)
         except urllib.error.HTTPError as e:
-            body_text = e.read()[:300].decode(errors="replace")
+            full_body = e.read().decode(errors="replace")
+            body_text = full_body[:300]
             last = f"HTTP {e.code}: {body_text}"
+            # A 402 is usually final (no credit, or the key's own limit is used up),
+            # but "in_flight_budget_exhausted" is not: OpenRouter holds each running
+            # request's estimated cost (priced at max_tokens) against a fraction of
+            # the balance, so with a low balance several workers at once are refused
+            # until the others finish. It comes with a Retry-After. Before this was
+            # retried, a low balance cost 18 judge calls in the run of 2026-09-29.
+            in_flight = e.code == 402 and "in_flight_budget_exhausted" in full_body
+            if in_flight and attempt < retries - 1:
+                ra = e.headers.get("Retry-After") if e.headers else None
+                time.sleep(min(max(int(ra) if ra and ra.isdigit() else 0, 15 * (attempt + 1)), 120))
+                continue
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:
                 # Rate limits (new OpenRouter accounts: 20 requests/min per model)
                 # need real backoff; honor Retry-After when given.
